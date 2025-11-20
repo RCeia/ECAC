@@ -584,43 +584,51 @@ def extract_window_features(x, fs):
     feats.update(f_spec)
     return feats
 
-def sliding_window_features(signal_array, labels_array, fs):
+def sliding_window_features(signal_array, labels_array, participant_array, fs):
     """
-    Extrai features em janelas de 5 segundos com 50% de overlap.
-    Se uma janela contiver mais do que uma atividade, descarta-a.
-
+    Extrai features em janelas de 5 segundos.
+    Verifica se a janela contém apenas uma atividade E apenas um participante.
+    
     Retorna:
       - X_feats: np.array [n_janelas, n_features]
-      - y: label por janela (única atividade)
-      - feature_names: lista de nomes das features
+      - y: label por janela
+      - p: participante por janela
+      - feature_names: nomes das features
     """
-    win_size = int(5 * fs)   # janela de 5 segundos
-    step = int(win_size / 2) # overlap de 50%
+    win_size = int(5 * fs)
+    step = int(win_size / 2)
 
     X_list = []
     y_list = []
+    p_list = [] # Lista para guardar o ID do participante
 
+    # O loop percorre os dados brutos
     for start in range(0, len(signal_array) - win_size + 1, step):
         end = start + win_size
+        
         xw = signal_array[start:end]
         lw = labels_array[start:end]
+        pw = participant_array[start:end] # Janela de IDs de participantes
 
-        # Verifica se a janela cobre apenas uma atividade
+        # Verifica unicidade de Label E de Participante
+        # (Isto impede que uma janela apanhe o fim do Part1 e o início do Part2)
         unique_labels = np.unique(lw)
-        if len(unique_labels) != 1:
+        unique_parts = np.unique(pw)
+
+        if len(unique_labels) != 1 or len(unique_parts) != 1:
             continue
 
         feats = extract_window_features(xw, fs=fs)
         X_list.append(list(feats.values()))
-        y_list.append(unique_labels[0]) 
+        y_list.append(unique_labels[0])
+        p_list.append(unique_parts[0]) # Guarda o ID do participante
 
     if not X_list:
-        return np.empty((0, 0)), np.array([]), []
-
+        return np.empty((0, 0)), np.array([]), np.array([]), []
 
     feature_names = list(extract_window_features(signal_array[:win_size], fs=fs).keys())
-    return np.array(X_list, dtype=float), np.array(y_list, dtype=float), feature_names
-
+    
+    return np.array(X_list, dtype=float), np.array(y_list, dtype=float), np.array(p_list, dtype=int), feature_names
 
 # ------------------------------
 # 4.3 – PCA
@@ -819,6 +827,7 @@ def main():
     todos_giro = []
     todos_mag = []
     todos_devices = []
+    todos_participantes = []
     todos_dados_completos = []
     fs = 50.0
     
@@ -848,6 +857,7 @@ def main():
         todos_mag.append(modulo_mag)
         todos_devices.append(device_ids)
         todos_dados_completos.append(dados)
+        todos_participantes.append(np.full(len(atividade_labels), part_id))
 
     # Concatenar todos os arrays
     todos_atividades = np.concatenate(todos_atividades)
@@ -857,7 +867,7 @@ def main():
     todos_devices = np.concatenate(todos_devices)
     todos_dados_completos = np.concatenate(todos_dados_completos)
 
-
+    todos_participantes = np.concatenate(todos_participantes)
     # ---------------
     # Exercício 3.1.
     # ---------------
@@ -1028,7 +1038,7 @@ def main():
     # -----------
     # Exercicio 4
     # -----------
-
+    
     print("\\n--- Objetivo 4: Extração de features, PCA e Feature Selection (guardado em outputs/) ---")
     # ---------------
     # Exercício 4.1.
@@ -1060,15 +1070,35 @@ def main():
 
     # Extração de features por janelas nos módulos
 
-    X_acc, y_win, feat_names = sliding_window_features(todos_acel, todos_atividades, fs)
-    X_gyr, y2, _ = sliding_window_features(todos_giro, todos_atividades, fs)
-    X_mag, y3, _ = sliding_window_features(todos_mag, todos_atividades, fs)
-
-    X_all = np.hstack([X_acc, X_gyr, X_mag]) if X_acc.size and X_gyr.size and X_mag.size else X_acc
-    feat_names_all = [f"acc_{n}" for n in feat_names] + [f"gyr_{n}" for n in feat_names] + [f"mag_{n}" for n in feat_names] if X_acc.size and X_gyr.size and X_mag.size else [f"acc_{n}" for n in feat_names]
-
+    print("A extrair features com janelas...")
     
-    save_csv(os.path.join(outdir, "4_2_features_windows.csv"), ["label"] + feat_names_all, [[y_win[i]] + list(X_all[i]) for i in range(len(y_win))])
+    # Passamos 'todos_participantes' para a função
+    # Recebemos 'p_win' (participante por janela) de volta
+    X_acc, y_win, p_win, feat_names = sliding_window_features(todos_acel, todos_atividades, todos_participantes, fs)
+    X_gyr, _, _, _ = sliding_window_features(todos_giro, todos_atividades, todos_participantes, fs)
+    X_mag, _, _, _ = sliding_window_features(todos_mag, todos_atividades, todos_participantes, fs)
+
+    # Concatenar features (se existirem dados)
+    if X_acc.size and X_gyr.size and X_mag.size:
+        X_all = np.hstack([X_acc, X_gyr, X_mag])
+        feat_names_all = [f"acc_{n}" for n in feat_names] + \
+                         [f"gyr_{n}" for n in feat_names] + \
+                         [f"mag_{n}" for n in feat_names]
+        
+        # Preparar linhas para o CSV incluindo o PARTICIPANTE
+        # Header: [participante, label, acc_mean, ..., gyr_mean, ..., mag_mean...]
+        header = ["participante", "label"] + feat_names_all
+        
+        rows = []
+        for i in range(len(y_win)):
+            # Construir a linha: [PartID, Label, Features...]
+            row = [int(p_win[i]), int(y_win[i])] + list(X_all[i])
+            rows.append(row)
+
+        save_csv(os.path.join(outdir, "4_2_features_windows.csv"), header, rows)
+        print("Features extraídas e guardadas em 4_2_features_windows.csv")
+    else:
+        print("Erro: Não foi possível extrair features (arrays vazios).")
 
     # ---------------------
     # Exercício 4.3. & 4.4.
