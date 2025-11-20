@@ -54,7 +54,7 @@ def next_plot_id(prefix="plot"):
 # Exercício 2
 # ------------------------------
 
-def carregar_dados(part_id, pasta_base="FORTH_TRACE_DATASET-master", devices=(1,2,3,4,5)):
+def carregar_dados(part_id, pasta_base="FORTH_TRACE_DATASET", devices=(1,2,3,4,5)):
     """Carrega os ficheiros de um participante para um único numpy array.
     Cada linha assume o formato: [DeviceID, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z, mag_x, mag_y, mag_z, ts, activity]
     Retorna: array shape (N, 12)
@@ -809,7 +809,7 @@ def compress_with_mask(X_row, selected_indices):
 # ------------------------------
 
 def main():
-    pasta_base = "FORTH_TRACE_DATASET-master"
+    pasta_base = "FORTH_TRACE_DATASET"
     participantes = list(range(0, 15))
     devices_todos = (1,2,3,4,5)
 
@@ -1134,7 +1134,6 @@ def main():
             sel_example = compress_with_mask(X_all[0], selected_idx).tolist()
             save_csv(os.path.join(outdir, "4_6_1_selection_example_row.csv"),
                      [feat_names_all[i] for i in selected_idx], [sel_example])
-«
 
 
 
