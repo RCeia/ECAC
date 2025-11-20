@@ -414,7 +414,7 @@ def plotar_clusters_3d(dados, atribuicoes, centroides, indices_outliers, titulo)
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, next_plot_id()))
     plt.close()
-
+""""""
 # ------------------------------
 # 4.1 – Significância estatística e normalidade por atividade
 #     Variáveis usadas: módulos (acel, giro, mag) – já calculados.
@@ -584,44 +584,43 @@ def extract_window_features(x, fs):
     feats.update(f_spec)
     return feats
 
-def sliding_window_features(signal_array, labels_array, participant_array, fs):
+def sliding_window_features(signal_array, labels_array, participant_array, device_array, fs):
     """
-    Extrai features em janelas de 5 segundos.
-    Verifica se a janela contém apenas uma atividade E apenas um participante.
-    
-    Retorna:
-      - X_feats: np.array [n_janelas, n_features]
-      - y: label por janela
-      - p: participante por janela
-      - feature_names: nomes das features
+    Extrai features, garantindo que a janela pertence ao mesmo:
+    1. Label (Atividade)
+    2. Participante
+    3. Device (Sensor) <--- NOVO FILTRO CRÍTICO
     """
     win_size = int(5 * fs)
     step = int(win_size / 2)
 
     X_list = []
     y_list = []
-    p_list = [] # Lista para guardar o ID do participante
+    p_list = [] 
+    # (Opcional: pode querer guardar o device ID também, mas não é estritamente necessário para o output)
 
-    # O loop percorre os dados brutos
     for start in range(0, len(signal_array) - win_size + 1, step):
         end = start + win_size
         
         xw = signal_array[start:end]
         lw = labels_array[start:end]
-        pw = participant_array[start:end] # Janela de IDs de participantes
+        pw = participant_array[start:end]
+        dw = device_array[start:end] # <--- Janela de Devices
 
-        # Verifica unicidade de Label E de Participante
-        # (Isto impede que uma janela apanhe o fim do Part1 e o início do Part2)
+        # Verifica unicidade de Label, Participante E DEVICE
         unique_labels = np.unique(lw)
         unique_parts = np.unique(pw)
+        unique_devs = np.unique(dw) # <--- Verifica se há apenas 1 device nesta janela
 
-        if len(unique_labels) != 1 or len(unique_parts) != 1:
+        # Se houver mais que 1 device, significa que estamos na transição entre sensores.
+        # Devemos descartar.
+        if len(unique_labels) != 1 or len(unique_parts) != 1 or len(unique_devs) != 1:
             continue
 
         feats = extract_window_features(xw, fs=fs)
         X_list.append(list(feats.values()))
         y_list.append(unique_labels[0])
-        p_list.append(unique_parts[0]) # Guarda o ID do participante
+        p_list.append(unique_parts[0])
 
     if not X_list:
         return np.empty((0, 0)), np.array([]), np.array([]), []
@@ -629,7 +628,6 @@ def sliding_window_features(signal_array, labels_array, participant_array, fs):
     feature_names = list(extract_window_features(signal_array[:win_size], fs=fs).keys())
     
     return np.array(X_list, dtype=float), np.array(y_list, dtype=float), np.array(p_list, dtype=int), feature_names
-
 # ------------------------------
 # 4.3 – PCA
 # ------------------------------
@@ -1034,7 +1032,7 @@ def main():
         dados_mag_3d = np.column_stack((todos_dados_pulso[:, 7], todos_dados_pulso[:, 8], todos_dados_pulso[:, 9]))
         dens_mag_kmeans = densidade_outliers_kmeans(dados_mag_3d, todos_atividades_pulso, n_clusters)
         print_densidade_legivel(dens_mag_kmeans, f"Magnetómetro (pulso direito, {n_clusters} clusters)")
-    
+
     # -----------
     # Exercicio 4
     # -----------
@@ -1074,9 +1072,9 @@ def main():
     
     # Passamos 'todos_participantes' para a função
     # Recebemos 'p_win' (participante por janela) de volta
-    X_acc, y_win, p_win, feat_names = sliding_window_features(todos_acel, todos_atividades, todos_participantes, fs)
-    X_gyr, _, _, _ = sliding_window_features(todos_giro, todos_atividades, todos_participantes, fs)
-    X_mag, _, _, _ = sliding_window_features(todos_mag, todos_atividades, todos_participantes, fs)
+    X_acc, y_win, p_win, feat_names = sliding_window_features(todos_acel, todos_atividades, todos_participantes, todos_devices, fs)
+    X_gyr, _, _, _ = sliding_window_features(todos_giro, todos_atividades, todos_participantes, todos_devices, fs)
+    X_mag, _, _, _ = sliding_window_features(todos_mag, todos_atividades, todos_participantes, todos_devices, fs)
 
     # Concatenar features (se existirem dados)
     if X_acc.size and X_gyr.size and X_mag.size:

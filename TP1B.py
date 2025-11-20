@@ -8,10 +8,21 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 import random
 
+# --- Imports para Embeddings (Exercício 2) ---
+try:
+    import torch
+    # Importar funções do ficheiro auxiliar
+    from embeddings_extractor import load_model, resample_to_30hz_5s, acc_segmentation
+    HAS_TORCH = True
+except ImportError as e:
+    HAS_TORCH = False
+    print(f"AVISO: Falha ao importar torch ou embeddings_extractor: {e}")
+    print("O Exercício 2 será ignorado.")
+
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # ------------------------------
-# Constantes de Índices (Features CSV)
+# Constantes
 # ------------------------------
 IDX_PART = 0
 IDX_LABEL = 1
@@ -30,6 +41,13 @@ def savefig(path):
     plt.savefig(path, dpi=150)
     plt.close()
 
+def save_csv(path, header, rows):
+    ensure_outputs_dir(os.path.dirname(path))
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if header: writer.writerow(header)
+        writer.writerows(rows)
+
 outdir = ensure_outputs_dir("outputsB")
 
 # ------------------------------
@@ -37,15 +55,10 @@ outdir = ensure_outputs_dir("outputsB")
 # ------------------------------
 
 def carregar_dados_brutos(part_id, pasta_base="FORTH_TRACE_DATASET", devices=(1,2,3,4,5)):
-    """
-    Carrega os dados originais (raw) para analisar o balanço de amostras.
-    Filtra atividades > 7.
-    """
     rows = []
     for dev in devices:
         path = os.path.join(pasta_base, f"part{part_id}", f"part{part_id}dev{dev}.csv")
         if not os.path.isfile(path): continue
-            
         try:
             with open(path, "r") as f:
                 reader = csv.reader(f)
@@ -53,253 +66,214 @@ def carregar_dados_brutos(part_id, pasta_base="FORTH_TRACE_DATASET", devices=(1,
                     if not line: continue
                     try:
                         vals = [float(x) for x in line]
-                        # A atividade é a última coluna. Filtro <= 7
-                        if vals[-1] <= 7:
-                            rows.append(vals)
+                        if vals[-1] <= 7: rows.append(vals)
                     except ValueError: continue 
         except Exception as e:
-            print(f"Erro ao ler ficheiro {path}: {e}")
-
+            print(f"Erro ao ler {path}: {e}")
     return np.array(rows) if rows else None
 
 def load_features_dataset(file_path):
-    """
-    Carrega o dataset de features (janelas) a partir de um CSV.
-    """
     if not os.path.exists(file_path):
-        print(f"ERRO: O ficheiro '{file_path}' não existe.")
-        print("Execute o script anterior (TP1B) para gerar as features primeiro.")
+        print(f"ERRO: '{file_path}' não existe.")
         return None, None
-
-    print(f"A carregar dataset de features: {file_path} ...")
-    
     try:
         with open(file_path, 'r') as f:
-            reader = csv.reader(f)
-            header = next(reader)
-    except Exception as e:
-        print(f"Erro ao ler CSV: {e}")
-        return None, None
-
-    try:
+            header = next(csv.reader(f))
         data = np.loadtxt(file_path, delimiter=',', skiprows=1)
-    except ValueError:
-        print("Erro ao carregar dados com numpy.")
+        return header, data
+    except Exception as e:
+        print(f"Erro ao carregar features: {e}")
         return None, None
-        
-    return header, data
 
 # ------------------------------
-# 1.1 Funções de Visualização (Plots)
+# 1.1 Plots
 # ------------------------------
-
 def plot_class_balance(labels_all, output_path, title="Distribuição", ylabel="Contagem"):
-    """
-    Gera gráfico de barras com a contagem de amostras por atividade.
-    """
-    classes_unicas, contagens = np.unique(labels_all, return_counts=True)
+    classes, counts = np.unique(labels_all, return_counts=True)
+    print(f"\nContagem ({ylabel}):")
+    for c, n in zip(classes, counts): print(f"Ativ {int(c)}: {n}")
     
-    print(f"\nContagem por Atividade ({ylabel}):")
-    for cls, count in zip(classes_unicas, contagens):
-        print(f"Atividade {int(cls)}: {count}")
-    
-    if len(contagens) > 0:
-        max_count = np.max(contagens)
-        min_count = np.min(contagens)
-        ratio = max_count / min_count if min_count > 0 else float('inf')
-        print(f"Ratio Max/Min: {ratio:.2f}")
-    
+    if len(counts) > 0:
+        r = np.max(counts) / np.min(counts)
+        print(f"Ratio Max/Min: {r:.2f}")
+
     plt.figure(figsize=(10, 6))
-    plt.bar(classes_unicas, contagens, color='skyblue', edgecolor='black')
-    plt.title(title)
-    plt.xlabel("Atividade")
-    plt.ylabel(ylabel)
-    plt.xticks(classes_unicas)
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
-    
+    plt.bar(classes, counts, color='skyblue', edgecolor='black')
+    plt.title(title); plt.xlabel("Atividade"); plt.ylabel(ylabel)
+    plt.xticks(classes); plt.grid(axis='y', linestyle='--', alpha=0.7)
     savefig(output_path)
-    print(f"Gráfico guardado em: {output_path}")
-
 
 # ------------------------------
-# 1.2 SMOTE Implementation
+# 1.2 e 1.3 SMOTE Logic
 # ------------------------------
-
 def generate_smote_samples(features_data, k_samples, k_neighbors=5):
-    """
-    Implementa SMOTE (Synthetic Minority Over-sampling Technique).
-    Recebe matriz de features e gera k_samples novas.
-    """
-    n_samples = len(features_data)
-    if n_samples < 2:
-        print("Erro: Amostras insuficientes para SMOTE.")
-        return None
-
-    k_neighbors = min(n_samples - 1, k_neighbors)
-    
+    if len(features_data) < 2: return None
+    k_neighbors = min(len(features_data) - 1, k_neighbors)
     nbrs = NearestNeighbors(n_neighbors=k_neighbors + 1).fit(features_data)
     _, indices = nbrs.kneighbors(features_data)
     
     new_samples = []
-    
     for _ in range(k_samples):
-        idx_base = random.randint(0, n_samples - 1)
-        base_sample = features_data[idx_base]
-        
-        idx_neighbor_local = random.randint(1, k_neighbors)
-        neighbor_idx = indices[idx_base][idx_neighbor_local]
-        neighbor_sample = features_data[neighbor_idx]
-        
-        diff = neighbor_sample - base_sample
-        gap = random.random()
-        synthetic_sample = base_sample + (gap * diff)
-        
-        new_samples.append(synthetic_sample)
-        
+        base = features_data[random.randint(0, len(features_data) - 1)]
+        neighbor = features_data[indices[random.randint(0, len(features_data) - 1)][random.randint(1, k_neighbors)]]
+        new_samples.append(base + random.random() * (neighbor - base))
     return np.array(new_samples)
 
-# ------------------------------
-# 1.3 SMOTE Visualization
-# ------------------------------
-
 def plot_smote_visualization(data_participant, synthetic_features, activity_target, feat_names, output_path):
-    """
-    Gera scatter plot 2D: Dados Reais (Features) vs Sintéticos.
-    """
-    feat_name_1, feat_name_2 = feat_names
-    
+    f1, f2 = feat_names
     plt.figure(figsize=(10, 7))
+    for lbl in np.unique(data_participant[:, IDX_LABEL]):
+        subset = data_participant[data_participant[:, IDX_LABEL] == lbl][:, IDX_FEATS:]
+        alpha = 0.3 if lbl != activity_target else 0.6
+        plt.scatter(subset[:, 0], subset[:, 1], label=f"Ativ {int(lbl)}", alpha=alpha, s=40)
     
-    unique_labels = np.unique(data_participant[:, IDX_LABEL])
-    
-    for label in sorted(unique_labels):
-        mask_lbl = data_participant[:, IDX_LABEL] == label
-        subset = data_participant[mask_lbl]
-        feat_subset = subset[:, IDX_FEATS:] 
-        
-        alpha_val = 0.3 if label != activity_target else 0.6
-        label_text = f"Ativ {int(label)}"
-        
-        # Plot apenas das duas primeiras features
-        plt.scatter(feat_subset[:, 0], feat_subset[:, 1], 
-                    label=label_text, alpha=alpha_val, s=40)
-
-    plt.scatter(synthetic_features[:, 0], synthetic_features[:, 1],
-                color='black', marker='X', s=150, 
-                label='Sintéticas (SMOTE)', zorder=10, edgecolors='white')
-
-    plt.title(f"Visualização SMOTE (Ativ {activity_target})\nFeatures: {feat_name_1} vs {feat_name_2}")
-    plt.xlabel(feat_name_1)
-    plt.ylabel(feat_name_2)
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.5)
-    
+    plt.scatter(synthetic_features[:, 0], synthetic_features[:, 1], c='black', marker='X', s=150, label='SMOTE', edgecolors='white')
+    plt.title(f"SMOTE (Ativ {activity_target}) - {f1} vs {f2}")
+    plt.xlabel(f1); plt.ylabel(f2); plt.legend(); plt.grid(True, alpha=0.5)
     savefig(output_path)
-    print(f"Gráfico SMOTE guardado em: {output_path}")
+
+# =============================================================================
+# EXERCÍCIO 2.1: EMBEDDINGS EXTRACTOR (Opção C - Stacking)
+# =============================================================================
+
+def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
+    """
+    Extrai embeddings usando 'embeddings_extractor.py' (harnet5).
+    Usa Opção C: Stacking (cada device é tratado como uma sample independente).
+    """
+    if not HAS_TORCH: return
+
+    print("A carregar modelo de embeddings (harnet5)...")
+    try:
+        encoder = load_model() # Importado
+    except Exception as e:
+        print(f"Erro ao carregar modelo: {e}")
+        return
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    encoder.to(device)
+    
+    print(f"A extrair embeddings (Stacking) em {device}...")
+    fs_original = 50.0
+    all_rows = []
+
+    # Loop: Participantes -> Devices
+    for p_id in participantes:
+        for dev_id in [1, 2, 3, 4, 5]:
+            # 1. Carregar CSV completo deste device (usando numpy loadtxt direto é mais rápido aqui)
+            path_csv = os.path.join(pasta_base, f"part{p_id}", f"part{p_id}dev{dev_id}.csv")
+            if not os.path.isfile(path_csv): continue
+
+            try:
+                # Carregar raw data para passar ao segmentador
+                csv_data = np.loadtxt(path_csv, delimiter=',')
+            except Exception: continue
+
+            # 2. Segmentação (usa função importada)
+            # Retorna lista de segmentos (N, 3) e lista de atividades
+            try:
+                segments, activities = acc_segmentation(csv_data)
+            except Exception as e:
+                print(f"Erro na segmentação P{p_id}D{dev_id}: {e}")
+                continue
+
+            if not segments: continue
+
+            # 3. Reamostragem e Preparação de Batch
+            # Filtra atividades > 7 e prepara tensores
+            batch_tensors = []
+            batch_meta = [] # (part_id, label)
+
+            for seg, act in zip(segments, activities):
+                if act > 7: continue # Filtro <= 7
+
+                # Resample para 30Hz (retorna (dados, fs))
+                seg_30hz, _ = resample_to_30hz_5s(seg, fs_original)
+                batch_tensors.append(seg_30hz)
+                batch_meta.append([p_id, act])
+            
+            if not batch_tensors: continue
+
+            # 4. Inferência em Batch
+            # Formato harnet5: (Batch, Channels=3, Time=150)
+            x_np = np.array(batch_tensors) # (B, 150, 3)
+            x_np = np.transpose(x_np, (0, 2, 1)) # (B, 3, 150)
+            
+            # Processar em mini-batches para não estourar memória
+            MINI_BATCH = 32
+            n_total = len(x_np)
+            
+            with torch.no_grad():
+                for i in range(0, n_total, MINI_BATCH):
+                    x_batch = x_np[i : i + MINI_BATCH]
+                    x_tensor = torch.from_numpy(x_batch).float().to(device)
+                    
+                    emb_batch = encoder(x_tensor).cpu().numpy() # (B, D_embed)
+
+                    # Guardar linhas
+                    for j, emb_vec in enumerate(emb_batch):
+                        meta = batch_meta[i + j]
+                        # Linha: [Part, Label, Emb_0, Emb_1...]
+                        all_rows.append( meta + emb_vec.tolist() )
+            
+            print(f" -> P{p_id} Dev{dev_id}: {len(batch_tensors)} segmentos processados.")
+
+    # 5. Guardar CSV
+    if all_rows:
+        n_dim = len(all_rows[0]) - 2
+        header = ["participante", "label"] + [f"emb_{k}" for k in range(n_dim)]
+        save_csv(output_csv, header, all_rows)
+        print(f"\nSUCESSO: {len(all_rows)} embeddings guardados em '{output_csv}'.")
+    else:
+        print("Aviso: Nenhum embedding gerado.")
 
 # ------------------------------
 # Main
 # ------------------------------
 
 def main():
-    # =================================================================
-    # EXERCÍCIO 1.1: Análise de Balanço (Dados Brutos / Raw Samples)
-    # =================================================================
-    print("\n=== 1.1 Análise de Balanço de Classes (Dados Brutos) ===")
-    
+    # --- EXERCÍCIO 1.1 ---
+    print("\n=== 1.1 Balanço de Atividades (Dados Brutos) ===")
     PASTA_RAW = "FORTH_TRACE_DATASET"
-    NUM_PARTICIPANTES = 15 # Ajuste conforme necessário
-    labels_brutos_total = []
-
-    print(f"A ler ficheiros brutos de {PASTA_RAW}...")
+    PARTICIPANTES = list(range(0, 15)) # 1 a 15
     
-    for p_id in range(1, NUM_PARTICIPANTES + 1):
-        dados_brutos = carregar_dados_brutos(p_id, pasta_base=PASTA_RAW)
-        if dados_brutos is not None:
-            # A atividade é a última coluna (índice -1 ou 11)
-            labels_brutos_total.append(dados_brutos[:, -1])
-            
-    if len(labels_brutos_total) > 0:
-        all_raw_labels = np.concatenate(labels_brutos_total)
-        print(f"Total de amostras brutas carregadas: {len(all_raw_labels)}")
+    raw_labels = []
+    for p in PARTICIPANTES:
+        d = carregar_dados_brutos(p, PASTA_RAW)
+        if d is not None: raw_labels.append(d[:, -1])
+    
+    if raw_labels:
+        all_labels = np.concatenate(raw_labels)
+        plot_class_balance(all_labels, os.path.join(outdir, "1_1_balance_raw.png"), "Distribuição Raw")
+    
+    # --- EXERCÍCIO 1.3 (SMOTE) ---
+    print("\n=== 1.3 SMOTE (Features) ===")
+    path_feats = os.path.join("outputs", "4_2_features_windows.csv")
+    h, data = load_features_dataset(path_feats)
+    
+    if data is not None:
+        data = data[data[:, IDX_LABEL] <= 7] # Filtro
         
-        path_balance_raw = os.path.join(outdir, "1_1_class_balance_raw_samples.png")
-        plot_class_balance(
-            all_raw_labels, 
-            path_balance_raw, 
-            title="Distribuição de Amostras Brutas por Atividade", 
-            ylabel="Número de Amostras (Raw)"
-        )
+        # P3, Ativ 4
+        p3_data = data[data[:, IDX_PART] == 3]
+        p3_act4 = p3_data[p3_data[:, IDX_LABEL] == 4]
+        
+        if len(p3_act4) > 1:
+            feats = p3_act4[:, IDX_FEATS:]
+            synth = generate_smote_samples(feats, k_samples=3)
+            if synth is not None:
+                plot_smote_visualization(p3_data, synth, 4, (h[IDX_FEATS], h[IDX_FEATS+1]), os.path.join(outdir, "1_3_smote.png"))
+        else:
+            print("Dados insuficientes para SMOTE (P3, Ativ4).")
+
+    # --- EXERCÍCIO 2.1 (Embeddings) ---
+    print("\n=== 2.1 Embeddings Dataset (Stacking) ===")
+    path_embed = os.path.join(outdir, "EMBEDDINGS_DATASET.csv")
+    
+    if not os.path.exists(path_embed):
+        gerar_embeddings_dataset(PARTICIPANTES, PASTA_RAW, path_embed)
     else:
-        print("Aviso: Não foram encontrados dados brutos ou pasta incorreta.")
-
-
-    # =================================================================
-    # Carregamento de Features (Para exercícios seguintes)
-    # =================================================================
-    print("\n=== Carregamento do Dataset de Features ===")
-    file_path_feats = os.path.join("outputs", "4_2_features_windows.csv")
-    
-    header, data_feats = load_features_dataset(file_path_feats)
-    if data_feats is None:
-        return
-
-    # Filtro de segurança: Apenas atividades <= 7
-    mask_le7 = data_feats[:, IDX_LABEL] <= 7
-    data_feats = data_feats[mask_le7]
-    print(f"Features filtradas (Atividade <= 7): {data_feats.shape[0]} janelas.")
-
-    if data_feats.shape[0] == 0:
-        return
-
-    # =================================================================
-    # EXERCÍCIO 1.3: SMOTE (Participante 3, Atividade 4)
-    # =================================================================
-    print("\n=== 1.3 SMOTE: Participante 3, Atividade 4 ===")
-    
-    PARTICIPANTE_ALVO = 3
-    ATIVIDADE_ALVO = 4
-    K_SAMPLES = 3
-    
-    # 1. Filtrar Dados do Participante
-    mask_p3 = data_feats[:, IDX_PART] == PARTICIPANTE_ALVO
-    data_p3 = data_feats[mask_p3]
-    
-    if len(data_p3) == 0:
-        print(f"Erro: Não há features para o participante {PARTICIPANTE_ALVO}.")
-        return
-
-    # 2. Filtrar Atividade Alvo
-    mask_act4 = data_p3[:, IDX_LABEL] == ATIVIDADE_ALVO
-    data_p3_act4 = data_p3[mask_act4]
-    
-    if len(data_p3_act4) < 2:
-        print(f"Erro: Insuficiente para SMOTE (Part {PARTICIPANTE_ALVO}, Ativ {ATIVIDADE_ALVO}).")
-        return
-
-    # 3. Gerar Amostras (SMOTE)
-    # Extrair matriz apenas com as features (coluna 2 em diante)
-    features_matrix = data_p3_act4[:, IDX_FEATS:]
-    
-    print(f"Janelas originais disponíveis para SMOTE: {len(features_matrix)}")
-    
-    synthetic_features = generate_smote_samples(features_matrix, k_samples=K_SAMPLES)
-    
-    if synthetic_features is not None:
-        print(f"Geradas {len(synthetic_features)} novas janelas sintéticas.")
-        
-        # 4. Visualizar
-        feat_name_1 = header[IDX_FEATS]
-        feat_name_2 = header[IDX_FEATS + 1]
-        path_smote_img = os.path.join(outdir, "1_3_smote_visualization.png")
-        
-        plot_smote_visualization(
-            data_participant=data_p3, 
-            synthetic_features=synthetic_features, 
-            activity_target=ATIVIDADE_ALVO,
-            feat_names=(feat_name_1, feat_name_2),
-            output_path=path_smote_img
-        )
+        print(f"Ficheiro '{path_embed}' já existe. A saltar.")
 
 if __name__ == "__main__":
     main()

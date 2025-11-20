@@ -1,3 +1,4 @@
 FORTH_TRACE_DATASET/
 outputs/
 outputsB/
+__pycache__/
