@@ -1134,38 +1134,7 @@ def main():
             sel_example = compress_with_mask(X_all[0], selected_idx).tolist()
             save_csv(os.path.join(outdir, "4_6_1_selection_example_row.csv"),
                      [feat_names_all[i] for i in selected_idx], [sel_example])
-
-        # 4.4.2 e 4.6.2
-
-        # Vantagens/Limitações – registadas em ficheiro de texto
-
-        with open(os.path.join(outdir, "4_4_2_4_6_2_vantagens_limitacoes.txt"), "w", encoding="utf-8") as f:
-            f.write(textwrap.dedent("""
-            PCA – Vantagens:
-            - Redução não supervisionada de dimensionalidade; remove correlação linear; melhora eficiência.
-            - Ajuda a reduzir ruído e overfitting quando há muitas features correlacionadas.
-
-            PCA – Limitações:
-            - Componentes não são diretamente interpretáveis (combinações lineares).
-            - Linearidade: não capta relações não lineares.
-
-            Fisher Score – Vantagens:
-            - Simples, rápido e interpretável; bom para classes separáveis por média/variância.
-            - Independente de modelo de classificação.
-
-            Fisher Score – Limitações:
-            - Univariado (avalia cada feature isoladamente); ignora interações entre features.
-            - Sensível a escalas/normalização e a distribuições não gaussianas.
-
-            ReliefF – Vantagens:
-            - Considera vizinhança e relações locais; capta interações e relevância condicional.
-            - Robusto a features redundantes até certo ponto.
-
-            ReliefF – Limitações:
-            - Mais pesado computacionalmente; necessita definir n_vizinhos e m amostras.
-            - Pode degradar em dados muito ruidosos ou com classes muito desbalanceadas.
-            """))
-
+«
 
 
 
