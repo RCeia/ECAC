@@ -101,11 +101,11 @@ def plot_distribuicao_atividades(dataset, output_dir="outputsB"):
         print(f"Atividade {int(ativ)}: {count} amostras")
 
 # =============================================================================
-# 3. MAIN
+# MAIN
 # =============================================================================
 def main():
-    # Configurações
-    NUM_PARTICIPANTES = 10 # Ajuste conforme o seu dataset real (ex: 10, 18, etc.)
+    # Exercício 0
+    NUM_PARTICIPANTES = 15 # Ajuste conforme o seu dataset real (ex: 10, 18, etc.)
     PASTA_DADOS = "FORTH_TRACE_DATASET"
     
     print(f"A iniciar carregamento de dados da pasta: {PASTA_DADOS}")
@@ -122,7 +122,9 @@ def main():
             print(f"-> Participante {p_id}: OK ({len(dados_part)} linhas)")
         else:
             print(f"-> Participante {p_id}: Sem dados.")
-
+    
+    # Exercício 1.1
+    
     # Verificar e Concatenar
     if len(dados_todos) > 0:
         dataset_final = np.concatenate(dados_todos, axis=0)
