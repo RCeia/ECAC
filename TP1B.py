@@ -8,6 +8,11 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 import random
 
+# --- Novos Imports para Ex 3 ---
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
 # --- Imports para Embeddings (Exercício 2) ---
 try:
     import torch
@@ -73,16 +78,39 @@ def carregar_dados_brutos(part_id, pasta_base="FORTH_TRACE_DATASET", devices=(1,
     return np.array(rows) if rows else None
 
 def load_features_dataset(file_path):
+    """
+    Versão Robusta: Limpa caracteres '[' e ']' que possam existir no CSV.
+    """
     if not os.path.exists(file_path):
         print(f"ERRO: '{file_path}' não existe.")
         return None, None
     try:
         with open(file_path, 'r') as f:
-            header = next(csv.reader(f))
-        data = np.loadtxt(file_path, delimiter=',', skiprows=1)
-        return header, data
+            lines = f.readlines()
+            
+        if not lines: return None, None
+        
+        # 1. Cabeçalho
+        header = lines[0].strip().split(',')
+        
+        # 2. Dados (Parsing manual para remover parêntesis)
+        data = []
+        for line in lines[1:]:
+            line = line.strip()
+            if not line: continue
+            
+            # Remove caracteres problemáticos
+            clean_line = line.replace('[', '').replace(']', '').replace('"', '')
+            try:
+                vals = [float(x) for x in clean_line.split(',')]
+                data.append(vals)
+            except ValueError:
+                continue
+                
+        return header, np.array(data)
+
     except Exception as e:
-        print(f"Erro ao carregar features: {e}")
+        print(f"Erro ao carregar dataset: {e}")
         return None, None
 
 # ------------------------------
@@ -160,17 +188,13 @@ def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
     # Loop: Participantes -> Devices
     for p_id in participantes:
         for dev_id in [1, 2, 3, 4, 5]:
-            # 1. Carregar CSV completo deste device (usando numpy loadtxt direto é mais rápido aqui)
             path_csv = os.path.join(pasta_base, f"part{p_id}", f"part{p_id}dev{dev_id}.csv")
             if not os.path.isfile(path_csv): continue
 
             try:
-                # Carregar raw data para passar ao segmentador
                 csv_data = np.loadtxt(path_csv, delimiter=',')
             except Exception: continue
 
-            # 2. Segmentação (usa função importada)
-            # Retorna lista de segmentos (N, 3) e lista de atividades
             try:
                 segments, activities = acc_segmentation(csv_data)
             except Exception as e:
@@ -179,27 +203,21 @@ def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
 
             if not segments: continue
 
-            # 3. Reamostragem e Preparação de Batch
-            # Filtra atividades > 7 e prepara tensores
             batch_tensors = []
-            batch_meta = [] # (part_id, label)
+            batch_meta = [] 
 
             for seg, act in zip(segments, activities):
-                if act > 7: continue # Filtro <= 7
+                if act > 7: continue 
 
-                # Resample para 30Hz (retorna (dados, fs))
                 seg_30hz, _ = resample_to_30hz_5s(seg, fs_original)
                 batch_tensors.append(seg_30hz)
                 batch_meta.append([p_id, act])
             
             if not batch_tensors: continue
 
-            # 4. Inferência em Batch
-            # Formato harnet5: (Batch, Channels=3, Time=150)
             x_np = np.array(batch_tensors) # (B, 150, 3)
             x_np = np.transpose(x_np, (0, 2, 1)) # (B, 3, 150)
             
-            # Processar em mini-batches para não estourar memória
             MINI_BATCH = 32
             n_total = len(x_np)
             
@@ -207,18 +225,14 @@ def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
                 for i in range(0, n_total, MINI_BATCH):
                     x_batch = x_np[i : i + MINI_BATCH]
                     x_tensor = torch.from_numpy(x_batch).float().to(device)
-                    
-                    emb_batch = encoder(x_tensor).cpu().numpy() # (B, D_embed)
+                    emb_batch = encoder(x_tensor).cpu().numpy() 
 
-                    # Guardar linhas
                     for j, emb_vec in enumerate(emb_batch):
                         meta = batch_meta[i + j]
-                        # Linha: [Part, Label, Emb_0, Emb_1...]
                         all_rows.append( meta + emb_vec.tolist() )
             
             print(f" -> P{p_id} Dev{dev_id}: {len(batch_tensors)} segmentos processados.")
 
-    # 5. Guardar CSV
     if all_rows:
         n_dim = len(all_rows[0]) - 2
         header = ["participante", "label"] + [f"emb_{k}" for k in range(n_dim)]
@@ -227,15 +241,94 @@ def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
     else:
         print("Aviso: Nenhum embedding gerado.")
 
+# =============================================================================
+# EXERCÍCIO 3: SPLITTING E PIPELINE
+# =============================================================================
+
+# --- 3.1 Within-Subject Split ---
+def split_within_subjects(X, y, participants, seed=42):
+    """
+    Divide 60% Treino, 20% Val, 20% Teste, misturando dados de todos os participantes.
+    """
+    # 1. Separa Treino (60%) do Resto (40%)
+    X_train, X_temp, y_train, y_temp, p_train, p_temp = train_test_split(
+        X, y, participants, test_size=0.4, random_state=seed, stratify=y
+    )
+    # 2. Separa Resto em Validação (metade de 40% -> 20%) e Teste (20%)
+    X_val, X_test, y_val, y_test, p_val, p_test = train_test_split(
+        X_temp, y_temp, p_temp, test_size=0.5, random_state=seed, stratify=y_temp
+    )
+    
+    print(f"   [Split 3.1 Within] Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
+    return X_train, y_train, X_val, y_val, X_test, y_test
+
+# --- 3.2 Between-Subject Split ---
+def split_between_subjects(X, y, participants, seed=42):
+    """
+    Divide por participante: 9 Treino, 3 Validação, 3 Teste.
+    """
+    unique_parts = np.unique(participants)
+    np.random.seed(seed)
+    np.random.shuffle(unique_parts)
+    
+    n_total = len(unique_parts)
+    if n_total < 3: return None
+        
+    n_train = 9 if n_total >= 15 else int(n_total * 0.6)
+    n_val = 3 if n_total >= 15 else int(n_total * 0.2)
+    
+    train_ids = unique_parts[:n_train]
+    val_ids = unique_parts[n_train : n_train + n_val]
+    test_ids = unique_parts[n_train + n_val :]
+    
+    mask_train = np.isin(participants, train_ids)
+    mask_val = np.isin(participants, val_ids)
+    mask_test = np.isin(participants, test_ids)
+    
+    print(f"   [Split 3.2 Between] Train IDs: {train_ids} | Val: {val_ids} | Test: {test_ids}")
+    return X[mask_train], y[mask_train], X[mask_val], y[mask_val], X[mask_test], y[mask_test]
+
+# --- 3.4 Pipeline ---
+def process_pipeline_scenarios(X_train, X_val, X_test):
+    """
+    Gera os cenários A (Normal) e B (PCA 90%).
+    ReliefF (C) deixado para mais tarde.
+    """
+    results = {}
+    
+    # 0. Normalização (Fit apenas no Treino)
+    scaler = StandardScaler()
+    X_train_norm = scaler.fit_transform(X_train)
+    X_val_norm = scaler.transform(X_val)
+    X_test_norm = scaler.transform(X_test)
+    
+    # Cenário A: All Features (Normalizado)
+    results['A'] = (X_train_norm, X_val_norm, X_test_norm)
+    
+    # Cenário B: PCA (90% Variância)
+    # Nota: fit apenas no treino normalizado
+    pca = PCA(n_components=0.90, random_state=42)
+    X_train_pca = pca.fit_transform(X_train_norm)
+    X_val_pca = pca.transform(X_val_norm)
+    X_test_pca = pca.transform(X_test_norm)
+    
+    results['B'] = (X_train_pca, X_val_pca, X_test_pca)
+    print(f"      -> Cenário B (PCA): {X_train.shape[1]} dims -> {pca.n_components_} componentes.")
+    
+    # Cenário C: ReliefF (Placeholder)
+    results['C'] = None 
+    
+    return results
+
 # ------------------------------
 # Main
 # ------------------------------
 
 def main():
     # --- EXERCÍCIO 1.1 ---
-    print("\n=== 1.1 Balanço de Atividades (Dados Brutos) ===")
+    print("\n=== 1.1 Balanço de Classes (Dados Brutos) ===")
     PASTA_RAW = "FORTH_TRACE_DATASET"
-    PARTICIPANTES = list(range(0, 15)) # 1 a 15
+    PARTICIPANTES = list(range(0, 15)) # 0 a 14
     
     raw_labels = []
     for p in PARTICIPANTES:
@@ -273,7 +366,56 @@ def main():
     if not os.path.exists(path_embed):
         gerar_embeddings_dataset(PARTICIPANTES, PASTA_RAW, path_embed)
     else:
-        print(f"Ficheiro '{path_embed}' já existe. A saltar.")
+        print(f"Ficheiro '{path_embed}' já existe. A saltar extração.")
+
+    # =================================================================
+    # EXERCÍCIO 3: PIPELINE (FEATURES + EMBEDDINGS)
+    # =================================================================
+    print("\n=== 3. Pipeline (Splitting & PCA) ===")
+    
+
+    # Preparar Datasets
+    # data (Features) já está carregado. Carregamos Embeddings.
+    data_features = data 
+    _, data_embeds = load_features_dataset(path_embed)
+    
+    if data_embeds is not None:
+        data_embeds = data_embeds[data_embeds[:, IDX_LABEL] <= 7]
+
+    datasets_to_process = []
+    if data_features is not None: datasets_to_process.append(("FEATURES", data_features))
+    if data_embeds is not None: datasets_to_process.append(("EMBEDDINGS", data_embeds))
+
+    ready_data = {} # Guarda dados prontos para treino
+
+    for name, ds in datasets_to_process:
+        print(f"\n>>> Processando {name} ({len(ds)} amostras)...")
+        
+        X = ds[:, IDX_FEATS:]
+        y = ds[:, IDX_LABEL]
+        p = ds[:, IDX_PART]
+        
+        # 3.1 Split Within-Subjects
+        print(" -> Estratégia 3.1 (Within):")
+        split_within_subjects(X, y, p)
+        
+        # 3.2 Split Between-Subjects (Preferida)
+        print(" -> Estratégia 3.2 (Between):")
+        split_res = split_between_subjects(X, y, p)
+        
+        if split_res is not None:
+            X_tr, y_tr, X_val, y_val, X_te, y_te = split_res
+            
+            # 3.4 Pipeline (Aplicado apenas à estratégia 3.2)
+            print(" -> Aplicando Pipeline à Estratégia 3.2:")
+            scenarios = process_pipeline_scenarios(X_tr, X_val, X_te)
+            
+            ready_data[name] = {
+                'y': (y_tr, y_val, y_te),
+                'scenarios': scenarios
+            }
+        
+    print("\nPipeline concluída! Dados prontos em 'ready_data'.")
 
 if __name__ == "__main__":
     main()
