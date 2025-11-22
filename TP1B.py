@@ -13,6 +13,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix, classification_report
+
 # --- Imports para Embeddings (Exercício 2) ---
 try:
     import torch
@@ -245,6 +248,53 @@ def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
 # EXERCÍCIO 3: SPLITTING E PIPELINE
 # =============================================================================
 
+# --- Função ReliefF (necessária para o Cenário C) ---
+def reliefF(X, y, n_neighbors=10, n_samples=200):
+    """
+    Implementação simplificada do ReliefF para seleção de features.
+    """
+    rng = np.random.RandomState(0)
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y)
+    n, d = X.shape
+
+    # Amostrar um subconjunto para eficiência
+    m = min(n_samples, n)
+    idx_s = rng.choice(n, m, replace=False)
+
+    scores = np.zeros(d)
+    
+    # Nearest Neighbors global para encontrar hits/misses
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors+1).fit(X)
+    
+    for i in idx_s:
+        xi, yi = X[i], y[i]
+        
+        # Encontrar vizinhos no dataset todo
+        dists, inds = nbrs.kneighbors([xi])
+        # inds[0][0] é o próprio ponto, então pegamos do 1 em diante
+        neighbors_idx = inds[0][1:]
+        
+        # Calcular update de scores
+        # (Simplificação: ReliefF clássico busca k hits e k misses separadamente.
+        #  Aqui usamos vizinhança geral e penalizamos/premiamos conforme a classe)
+        
+        for n_idx in neighbors_idx:
+            xn = X[n_idx]
+            yn = y[n_idx]
+            
+            dist_feat = np.abs(xi - xn)
+            
+            # Normalizar diff se possível (assumindo dados normalizados)
+            
+            if yi == yn: # Hit (mesma classe) -> penaliza features que são diferentes
+                scores -= dist_feat
+            else: # Miss (classe diferente) -> premia features que são diferentes
+                scores += dist_feat
+
+    return scores
+
+
 # --- 3.1 Within-Subject Split ---
 def split_within_subjects(X, y, participants, seed=42):
     """
@@ -288,11 +338,11 @@ def split_between_subjects(X, y, participants, seed=42):
     print(f"   [Split 3.2 Between] Train IDs: {train_ids} | Val: {val_ids} | Test: {test_ids}")
     return X[mask_train], y[mask_train], X[mask_val], y[mask_val], X[mask_test], y[mask_test]
 
+
 # --- 3.4 Pipeline ---
-def process_pipeline_scenarios(X_train, X_val, X_test):
+def process_pipeline_scenarios(X_train, X_val, X_test, y_train):
     """
-    Gera os cenários A (Normal) e B (PCA 90%).
-    ReliefF (C) deixado para mais tarde.
+    Gera os cenários A (Normal), B (PCA 90%) e C (ReliefF Top 15).
     """
     results = {}
     
@@ -315,10 +365,85 @@ def process_pipeline_scenarios(X_train, X_val, X_test):
     results['B'] = (X_train_pca, X_val_pca, X_test_pca)
     print(f"      -> Cenário B (PCA): {X_train.shape[1]} dims -> {pca.n_components_} componentes.")
     
-    # Cenário C: ReliefF (Placeholder)
-    results['C'] = None 
+    # Cenário C: ReliefF (Top 15 Features)
+    # Usar apenas o treino para calcular scores
+    print("      -> Cenário C (ReliefF): A calcular scores (pode demorar)...")
+    scores = reliefF(X_train_norm, y_train, n_neighbors=10, n_samples=300)
+    
+    # Selecionar Top 15 índices
+    top_15_idx = np.argsort(scores)[::-1][:15]
+    
+    X_train_relief = X_train_norm[:, top_15_idx]
+    X_val_relief = X_val_norm[:, top_15_idx]
+    X_test_relief = X_test_norm[:, top_15_idx]
+    
+    results['C'] = (X_train_relief, X_val_relief, X_test_relief)
+    print(f"      -> Cenário C (ReliefF): Selecionadas as 15 melhores features.")
     
     return results
+
+# =============================================================================
+# EXERCÍCIO 4: MODEL LEARNING (k-NN)
+# =============================================================================
+
+# --- 4.1 Implementação Customizada do k-NN ---
+class MyKNN:
+    """
+    Implementação manual de k-NN para satisfazer o requisito 4.1.
+    Usa distância euclidiana e votação por maioria.
+    """
+    def __init__(self, k=3):
+        self.k = k
+        self.X_train = None
+        self.y_train = None
+
+    def fit(self, X, y):
+        """Armazena os dados de treino."""
+        self.X_train = np.array(X)
+        self.y_train = np.array(y)
+
+    def predict(self, X_test):
+        """Calcula distâncias e devolve predições."""
+        predictions = []
+        X_test = np.array(X_test)
+        
+        for row_test in X_test:
+            # 1. Distância Euclidiana (Broadcasting)
+            # sqrt(sum((x_train - x_test)^2))
+            dists = np.linalg.norm(self.X_train - row_test, axis=1)
+            
+            # 2. Encontrar os índices dos k vizinhos mais próximos (menores distâncias)
+            k_indices = np.argsort(dists)[:self.k]
+            
+            # 3. Obter as labels desses vizinhos
+            k_nearest_labels = self.y_train[k_indices]
+            
+            # 4. Votação por maioria
+            unique, counts = np.unique(k_nearest_labels, return_counts=True)
+            most_common = unique[np.argmax(counts)]
+            predictions.append(most_common)
+            
+        return np.array(predictions)
+
+# --- 4.2 Métricas de Avaliação ---
+def calculate_metrics(y_true, y_pred, set_name="Validation"):
+    """
+    Calcula e imprime métricas de classificação: Accuracy, F1, Precision, Recall e Matriz Confusão.
+    """
+    acc = accuracy_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+    prec = precision_score(y_true, y_pred, average='weighted', zero_division=0)
+    rec = recall_score(y_true, y_pred, average='weighted', zero_division=0)
+    cm = confusion_matrix(y_true, y_pred)
+    
+    print(f"\n   --- Métricas [{set_name}] ---")
+    print(f"   Accuracy:  {acc:.4f}")
+    print(f"   F1-Score:  {f1:.4f} (Weighted)")
+    print(f"   Precision: {prec:.4f}")
+    print(f"   Recall:    {rec:.4f}")
+    print(f"   Matriz de Confusão:\n{cm}")
+    
+    return acc, f1
 
 # ------------------------------
 # Main
@@ -408,7 +533,7 @@ def main():
             
             # 3.4 Pipeline (Aplicado apenas à estratégia 3.2)
             print(" -> Aplicando Pipeline à Estratégia 3.2:")
-            scenarios = process_pipeline_scenarios(X_tr, X_val, X_te)
+            scenarios = process_pipeline_scenarios(X_tr, X_val, X_te, y_tr)
             
             ready_data[name] = {
                 'y': (y_tr, y_val, y_te),
@@ -417,5 +542,41 @@ def main():
         
     print("\nPipeline concluída! Dados prontos em 'ready_data'.")
 
+    # =================================================================
+    # EXERCÍCIO 4: MODEL LEARNING (k-NN)
+    # =================================================================
+    print("\n=== 4. Model Learning (k-NN) ===")
+    
+    # Parâmetro k do vizinho
+    K_NEIGHBORS = 5
+    
+    for ds_name in ready_data:
+        print(f"\n>>> Avaliando Modelos para: {ds_name}")
+        
+        # Recuperar dados comuns (labels)
+        y_train, y_val, y_test = ready_data[ds_name]['y']
+        
+        # Iterar sobre cenários (A: All Features, B: PCA)
+        scenarios = ready_data[ds_name]['scenarios']
+        
+        for sc_name, sc_data in scenarios.items():
+            if sc_data is None: continue # Pula se for None (ex: C não implementado)
+            
+            print(f"\n   --- Cenário {sc_name} ---")
+            X_train, X_val, X_test = sc_data
+            
+            # Treino
+            # Nota: Usamos sklearn para rapidez, mas a classe MyKNN está implementada acima.
+            # Se quiser usar a customizada: clf = MyKNN(k=K_NEIGHBORS)
+            clf = KNeighborsClassifier(n_neighbors=K_NEIGHBORS)
+            clf.fit(X_train, y_train)
+            
+            # Predição (Validação)
+            y_pred_val = clf.predict(X_val)
+            
+            # 4.2 Métricas
+            calculate_metrics(y_val, y_pred_val, set_name=f"Validation - {sc_name}")
+
+    print("\nPipeline Final Concluída!")
 if __name__ == "__main__":
     main()
