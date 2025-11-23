@@ -445,6 +445,44 @@ def calculate_metrics(y_true, y_pred, set_name="Validation"):
     
     return acc, f1
 
+# =============================================================================
+# EXERCÍCIO 5.1: MODEL LEARNING (k-NN)
+# =============================================================================
+
+def tune_and_retrain(X_train, y_train, X_val, y_val, X_test, y_test, k_values=[1,3,5,7,9,11,13]):
+    """
+    Exercício 5.1:
+    1. Tuning: Encontrar melhor k usando Validação.
+    2. Retrain: Treinar com (Treino + Validação) usando melhor k.
+    3. Avaliação: Testar no conjunto de Teste.
+    """
+    # A. Tuning
+    best_acc = -1
+    best_k = k_values[0]
+    
+    for k in k_values:
+        # Usamos sklearn pela performance
+        clf = KNeighborsClassifier(n_neighbors=k)
+        clf.fit(X_train, y_train)
+        acc = clf.score(X_val, y_val)
+        
+        if acc > best_acc:
+            best_acc = acc
+            best_k = k
+            
+    # B. Retrain (Juntar dados)
+    X_full_train = np.vstack((X_train, X_val))
+    y_full_train = np.concatenate((y_train, y_val))
+    
+    # C. Modelo Final
+    final_clf = KNeighborsClassifier(n_neighbors=best_k)
+    final_clf.fit(X_full_train, y_full_train)
+    
+    # D. Avaliação Final
+    y_pred_test = final_clf.predict(X_test)
+    
+    return best_k, y_test, y_pred_test
+
 # ------------------------------
 # Main
 # ------------------------------
@@ -543,12 +581,12 @@ def main():
     print("\nPipeline concluída! Dados prontos em 'ready_data'.")
 
     # =================================================================
-    # EXERCÍCIO 4: MODEL LEARNING (k-NN)
+    # EXERCÍCIO 4 & 5.1: MODEL LEARNING & EVALUATION
     # =================================================================
-    print("\n=== 4. Model Learning (k-NN) ===")
+    print("\n=== 4. & 5.1 Model Learning (k-NN Tuning) ===")
     
-    # Parâmetro k do vizinho
-    K_NEIGHBORS = 5
+    # Lista de valores de k a testar (Ímpares para evitar empates)
+    K_VALUES_LIST = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]
     
     for ds_name in ready_data:
         print(f"\n>>> Avaliando Modelos para: {ds_name}")
@@ -560,23 +598,29 @@ def main():
         scenarios = ready_data[ds_name]['scenarios']
         
         for sc_name, sc_data in scenarios.items():
-            if sc_data is None: continue # Pula se for None (ex: C não implementado)
+            if sc_data is None: continue # Pula se for None
             
             print(f"\n   --- Cenário {sc_name} ---")
             X_train, X_val, X_test = sc_data
             
-            # Treino
-            # Nota: Usamos sklearn para rapidez, mas a classe MyKNN está implementada acima.
-            # Se quiser usar a customizada: clf = MyKNN(k=K_NEIGHBORS)
-            clf = KNeighborsClassifier(n_neighbors=K_NEIGHBORS)
-            clf.fit(X_train, y_train)
+            # -------------------------------------------------------
+            # AQUI ENTRA A LÓGICA DO 5.1
+            # Em vez de treinar logo com k=5, chamamos a função de tuning
+            # -------------------------------------------------------
             
-            # Predição (Validação)
-            y_pred_val = clf.predict(X_val)
+            print(f"      [5.1] A otimizar k e re-treinar...")
             
-            # 4.2 Métricas
-            calculate_metrics(y_val, y_pred_val, set_name=f"Validation - {sc_name}")
+            best_k, y_test_true, y_test_pred = tune_and_retrain(
+                X_train, y_train, X_val, y_val, X_test, y_test, 
+                K_VALUES_LIST
+            )
+            
+            print(f"      -> Melhor k encontrado: {best_k}")
+            
+            # 4.2 Métricas (Agora aplicadas ao TEST SET com o modelo otimizado)
+            calculate_metrics(y_test_true, y_test_pred, set_name=f"TEST FINAL - {sc_name} (k={best_k})")
 
-    print("\nPipeline Final Concluída!")
+
+
 if __name__ == "__main__":
     main()
