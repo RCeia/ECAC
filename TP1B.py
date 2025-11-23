@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 import random
-from scipy.stats import ttest_rel
+from scipy.stats import ttest_rel, skew, kurtosis, entropy
 
 # --- Novos Imports para Ex 3 ---
 from sklearn.model_selection import train_test_split
@@ -570,6 +570,166 @@ def plot_results_distribution(results_dict, output_dir):
     plt.close()
     print(f"      Gráfico guardado em: {filename}")
 
+
+# =============================================================================
+# EXERCÍCIO 6: DEPLOYMENT (Classificação de Novos Dados Brutos)
+# =============================================================================
+
+# --- Funções Auxiliares de Extração (Versão compacta para Produção) ---
+def _deploy_time_features(x):
+    if len(x) == 0: return [0.0]*10
+    diff_sign = np.sign(x[1:]) != np.sign(x[:-1])
+    zcr = float(np.sum(diff_sign)) / (len(x) - 1 + 1e-12)
+    # Ordem: mean, std, var, rms, median, min, max, skew, kurt, zcr
+    return [float(np.mean(x)), float(np.std(x)), float(np.var(x)), 
+            float(np.sqrt(np.mean(x**2))), float(np.median(x)), float(np.min(x)), 
+            float(np.max(x)), float(skew(x)), float(kurtosis(x)), zcr]
+
+def _deploy_spec_features(x, fs=50.0):
+    # Se o sinal for vazio, retorna 10 zeros (para manter consistência das 60 features totais)
+    if len(x) == 0: return [0.0]*10 
+    
+    # Preparação básica (Janela Hanning + FFT)
+    w = np.hanning(len(x))
+    X_fft = np.fft.rfft((x - np.mean(x)) * w)
+    mag = np.abs(X_fft)
+    psd = mag**2
+    psd_sum = np.sum(psd) + 1e-12
+    freqs = np.fft.rfftfreq(len(x), d=1.0/fs)
+    
+    # 1. Centroid
+    centroid = np.sum(freqs * psd) / psd_sum
+    
+    # 2. Bandwidth
+    var = np.sum(((freqs - centroid)**2) * psd) / psd_sum
+    bandwidth = np.sqrt(max(var, 0))
+    
+    # 3. Peak Freq
+    peak_freq = float(freqs[np.argmax(psd)])
+    
+    # 4. Entropy
+    spec_ent = float(entropy(psd/psd_sum))
+    
+    # 5. Flatness
+    gmean = np.exp(np.mean(np.log(psd + 1e-12)))
+    amean = np.mean(psd) + 1e-12
+    flatness = float(gmean / amean)
+    
+    # --- FEATURES QUE FALTAVAM ---
+    
+    # 6. Rolloff 85
+    cumulative_psd = np.cumsum(psd)
+    rolloff_threshold = 0.85 * psd_sum
+    idx_rolloff = np.where(cumulative_psd >= rolloff_threshold)[0]
+    rolloff_85 = float(freqs[idx_rolloff[0]]) if len(idx_rolloff) > 0 else 0.0
+    
+    # 7. Crest Factor
+    crest = float(np.max(mag) / (np.mean(mag) + 1e-12))
+    
+    # 8. Contrast (Simplificado em 6 bandas)
+    n_bands = 6
+    if len(psd) >= n_bands:
+        band_edges = np.linspace(0, len(psd), n_bands + 1, dtype=int)
+        band_max = [np.max(psd[band_edges[i]:band_edges[i+1]]) for i in range(n_bands)]
+        band_min = [np.min(psd[band_edges[i]:band_edges[i+1]]) for i in range(n_bands)]
+        contrast = float(np.mean(band_max) - np.mean(band_min))
+    else:
+        contrast = 0.0
+        
+    # 9. Energy
+    energy = float(psd_sum)
+    
+    # 10. Spread (Na sua implementação original do TP1A, era idêntico ao bandwidth)
+    spread = bandwidth 
+
+    # Retorna lista com 10 elementos
+    return [centroid, bandwidth, peak_freq, spec_ent, flatness, 
+            rolloff_85, crest, contrast, energy, spread]
+
+def _deploy_extract_feats(raw_window):
+    """
+    Recebe janela bruta (N, 9) -> [Ax, Ay, Az, Gx, Gy, Gz, Mx, My, Mz]
+    Calcula Módulo -> Extrai Features Estatísticas.
+    """
+    feats_vec = []
+    # 1. Calcular Módulos (Raiz Quadrada da Soma dos Quadrados)
+    acc_mod = np.sqrt(np.sum(raw_window[:, 0:3]**2, axis=1))
+    gyr_mod = np.sqrt(np.sum(raw_window[:, 3:6]**2, axis=1))
+    mag_mod = np.sqrt(np.sum(raw_window[:, 6:9]**2, axis=1))
+    
+    # 2. Extrair features para cada sensor
+    for signal in [acc_mod, gyr_mod, mag_mod]:
+        feats_vec.extend(_deploy_time_features(signal))
+        feats_vec.extend(_deploy_spec_features(signal))
+        
+    return np.array(feats_vec).reshape(1, -1) # Retorna shape (1, n_features)
+
+class ActivityDeployer:
+    """
+    O 'Modelo Final' pronto a usar. Guarda o Scaler, o Classificador e o PCA.
+    """
+    def __init__(self, scaler, classifier, pca=None):
+        self.scaler = scaler
+        self.classifier = classifier
+        self.pca = pca
+        
+    def predict(self, raw_data_matrix):
+        """
+        Processa dados brutos e devolve a atividade prevista.
+        Input: Matriz numpy (N, 9)
+        """
+        # 1. Ajustar tamanho da janela para 250 (5 segundos @ 50Hz)
+        # Se tiver 256, cortamos as últimas 6.
+        target_len = 250
+        if len(raw_data_matrix) >= target_len:
+            window = raw_data_matrix[:target_len, :]
+        else:
+            # Padding com zeros se o ficheiro for muito curto (segurança)
+            pad = np.zeros((target_len - len(raw_data_matrix), 9))
+            window = np.vstack([raw_data_matrix, pad])
+            
+        # 2. Extração de Features
+        X_features = _deploy_extract_feats(window)
+        
+        # 3. Normalização
+        X_norm = self.scaler.transform(X_features)
+        
+        # 4. PCA (se aplicável)
+        if self.pca is not None:
+            X_final = self.pca.transform(X_norm)
+        else:
+            X_final = X_norm
+            
+        # 5. Classificação
+        prediction = self.classifier.predict(X_final)
+        return int(prediction[0])
+
+def train_deployable_model(X, y, best_k, use_pca=False):
+    """
+    Treina o modelo com TODOS os dados disponíveis (sem splits) para máxima performance.
+    """
+    print(f"\n[Deploy] A treinar modelo final (k={best_k}, PCA={use_pca})...")
+    
+    # 1. Treinar Scaler com tudo
+    scaler = StandardScaler()
+    X_norm = scaler.fit_transform(X)
+    
+    X_train_final = X_norm
+    pca_model = None
+    
+    # 2. Treinar PCA com tudo (se pedido)
+    if use_pca:
+        pca_model = PCA(n_components=0.90, random_state=42)
+        X_train_final = pca_model.fit_transform(X_norm)
+        print(f"[Deploy] PCA treinado. Componentes mantidos: {pca_model.n_components_}")
+        
+    # 3. Treinar k-NN com tudo
+    clf = KNeighborsClassifier(n_neighbors=best_k)
+    clf.fit(X_train_final, y)
+    
+    return ActivityDeployer(scaler, clf, pca_model)
+
+
 # ------------------------------
 # Main
 # ------------------------------
@@ -673,7 +833,7 @@ def main():
     print("\n=== 5. Evaluation Loop (Tuning, Retrain & Stats) ===")
     
     # --- ALTERAÇÃO: 20 Repetições ---
-    N_REPEATS = 20 
+    N_REPEATS = 1
     K_VALUES_LIST = [1, 3, 5, 7, 9, 11, 13, 15]
     
     # Dicionário para acumular resultados: {'FEATURES-A': [0.62, 0.61...], ...}
@@ -727,6 +887,60 @@ def main():
     perform_hypothesis_testing(results_history)
 
     print("\nPipeline Final Concluída!")
+
+
+    # =================================================================
+    # EXERCÍCIO 6: DEPLOYMENT (Teste com 'teste.csv')
+    # =================================================================
+    print("\n=== 6. Deployment (Aplicação Real) ===")
+    
+    # --- Configuração do Modelo de Produção ---
+    # Escolhemos o modelo FEATURES (Cenário A ou B) pois teve melhor performance no Ex 5.
+    # k=15 foi um valor consistente nos seus resultados.
+    BEST_K_PROD = 15
+    USAR_PCA = False # Coloque True se preferir o modelo com PCA
+    
+    if data_features is not None:
+        # Preparar dados totais para treino
+        X_all = data_features[:, IDX_FEATS:]
+        y_all = data_features[:, IDX_LABEL]
+        
+        # 1. Treinar o 'Deployer' (Cria o cérebro do modelo)
+        deployer = train_deployable_model(X_all, y_all, best_k=BEST_K_PROD, use_pca=USAR_PCA)
+        
+        # 2. Carregar o ficheiro de teste 'teste.csv'
+        TEST_FILE = "teste.csv"
+        print(f"[Deploy] A procurar ficheiro '{TEST_FILE}' na pasta...")
+        
+        if os.path.exists(TEST_FILE):
+            try:
+                # Carregar ignorando cabeçalhos se existirem
+                raw_input = np.loadtxt(TEST_FILE, delimiter=',')
+                
+                # Validação básica
+                if raw_input.ndim == 2 and raw_input.shape[1] >= 9:
+                    # Garantir que usamos apenas as primeiras 9 colunas (Acc, Gyr, Mag)
+                    # Caso o ficheiro tenha mais (ex: timestamps)
+                    input_data = raw_input[:, :9]
+                    
+                    print(f"[Deploy] Ficheiro carregado com sucesso: {input_data.shape}")
+                    print("[Deploy] A processar janelas e extrair features...")
+                    
+                    # 3. Previsão
+                    predicao = deployer.predict(input_data)
+                    
+                    print(f"\n>>>O MODELO PREVIU A ATIVIDADE: {predicao}")
+                    
+                else:
+                    print(f"Erro: '{TEST_FILE}' tem formato inválido. Esperado: (N, 9+). Encontrado: {raw_input.shape}")
+            except Exception as e:
+                print(f"Erro ao ler '{TEST_FILE}': {e}")
+        else:
+            print(f"Aviso: Ficheiro '{TEST_FILE}' não encontrado.")
+            print("Crie um ficheiro CSV com 256 linhas e 9 colunas para testar esta funcionalidade.")
+            
+    else:
+        print("Erro: Não existem dados de Features para treinar o modelo de produção.")
 
 
 if __name__ == "__main__":
