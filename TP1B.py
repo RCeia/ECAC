@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 import random
+from scipy.stats import ttest_rel
 
 # --- Novos Imports para Ex 3 ---
 from sklearn.model_selection import train_test_split
@@ -461,9 +462,9 @@ def tune_and_retrain(X_train, y_train, X_val, y_val, X_test, y_test, k_values=[1
     best_k = k_values[0]
     
     for k in k_values:
-        # Usamos sklearn pela performance
         clf = KNeighborsClassifier(n_neighbors=k)
         clf.fit(X_train, y_train)
+        # Score devolve a accuracy diretamente
         acc = clf.score(X_val, y_val)
         
         if acc > best_acc:
@@ -480,8 +481,62 @@ def tune_and_retrain(X_train, y_train, X_val, y_val, X_test, y_test, k_values=[1
     
     # D. Avaliação Final
     y_pred_test = final_clf.predict(X_test)
+    test_acc = accuracy_score(y_test, y_pred_test)
     
-    return best_k, y_test, y_pred_test
+    # DEVOLVE 4 VALORES: Accuracy, K, True Labels, Predicted Labels
+    return test_acc, best_k, y_test, y_pred_test
+
+
+def perform_hypothesis_testing(results_dict):
+    """
+    5.3: Comparação Estatística usando Paired T-Test.
+    Recebe: {'ModelName': [acc_iter1, acc_iter2, ...], ...}
+    """
+    print("\n" + "="*60)
+    print("=== 5.3 TESTES DE HIPÓTESE (Statistical Significance) ===")
+    print("="*60)
+    
+    if len(results_dict) < 2:
+        print("Menos de 2 modelos para comparar. Ignorando.")
+        return
+
+    # 1. Determinar o Melhor Modelo (Baseline)
+    model_means = {m: np.mean(s) for m, s in results_dict.items()}
+    best_model_name = max(model_means, key=model_means.get)
+    best_scores = results_dict[best_model_name]
+    
+    print(f"🏆 MELHOR MODELO (Baseline): {best_model_name}")
+    print(f"   Média Accuracy: {model_means[best_model_name]:.4f}")
+    print(f"   Desvio Padrão:  {np.std(best_scores):.4f}")
+    print("-" * 60)
+    print(f"{'Modelo Comparado':<30} | {'Média':<8} | {'p-value':<10} | {'Significativo?'}")
+    print("-" * 60)
+
+    # 2. Comparar o Melhor contra os Restantes
+    alpha = 0.05 # Nível de significância (95% confiança)
+    
+    for model_name, scores in results_dict.items():
+        if model_name == best_model_name:
+            continue
+            
+        # Teste T Emparelhado (Paired T-Test)
+        # Usamos emparelhado porque ambos os modelos foram testados 
+        # EXATAMENTE nas mesmas divisões (seeds) de dados.
+        t_stat, p_val = ttest_rel(best_scores, scores)
+        
+        is_significant = "SIM ✅" if p_val < alpha else "NÃO ❌"
+        
+        print(f"{model_name:<30} | {np.mean(scores):.4f}   | {p_val:.2e}   | {is_significant}")
+
+    print("-" * 60)
+    print("Justificação Estatística:")
+    print("Utilizou-se o 'Paired Samples t-test' (Teste T Emparelhado).")
+    print("Justificação: As amostras de performance não são independentes, pois todos os")
+    print("modelos foram avaliados sobre as mesmas repetições de splits (mesmas seeds).")
+    print("Isto reduz a variância explicada pelo split, focando na diferença real dos modelos.")
+    print("="*60 + "\n")
+
+
 
 # ------------------------------
 # Main
@@ -583,43 +638,62 @@ def main():
     # =================================================================
     # EXERCÍCIO 4 & 5.1: MODEL LEARNING & EVALUATION
     # =================================================================
-    print("\n=== 4. & 5.1 Model Learning (k-NN Tuning) ===")
+    print("\n=== 5. Evaluation Loop (Tuning, Retrain & Stats) ===")
     
-    # Lista de valores de k a testar (Ímpares para evitar empates)
-    K_VALUES_LIST = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]
+    # Aumentar N para ter validade estatística (mínimo 5, ideal 10-30)
+    N_REPEATS = 5 
+    K_VALUES_LIST = [1, 3, 5, 7, 9, 11, 13, 15]
     
-    for ds_name in ready_data:
-        print(f"\n>>> Avaliando Modelos para: {ds_name}")
-        
-        # Recuperar dados comuns (labels)
-        y_train, y_val, y_test = ready_data[ds_name]['y']
-        
-        # Iterar sobre cenários (A: All Features, B: PCA)
-        scenarios = ready_data[ds_name]['scenarios']
-        
-        for sc_name, sc_data in scenarios.items():
-            if sc_data is None: continue # Pula se for None
-            
-            print(f"\n   --- Cenário {sc_name} ---")
-            X_train, X_val, X_test = sc_data
-            
-            # -------------------------------------------------------
-            # AQUI ENTRA A LÓGICA DO 5.1
-            # Em vez de treinar logo com k=5, chamamos a função de tuning
-            # -------------------------------------------------------
-            
-            print(f"      [5.1] A otimizar k e re-treinar...")
-            
-            best_k, y_test_true, y_test_pred = tune_and_retrain(
-                X_train, y_train, X_val, y_val, X_test, y_test, 
-                K_VALUES_LIST
-            )
-            
-            print(f"      -> Melhor k encontrado: {best_k}")
-            
-            # 4.2 Métricas (Agora aplicadas ao TEST SET com o modelo otimizado)
-            calculate_metrics(y_test_true, y_test_pred, set_name=f"TEST FINAL - {sc_name} (k={best_k})")
+    # Dicionário para acumular resultados: {'FEATURES-A': [0.62, 0.61...], ...}
+    results_history = {}
 
+    for i in range(N_REPEATS):
+        current_seed = 42 + i
+        print(f"\n>> Iteração {i+1}/{N_REPEATS} (Seed {current_seed})...")
+        
+        for ds_name in ready_data:
+            # Recuperar dados brutos para fazer novo split
+            # Nota: ready_data guardava o split fixo da seed 42. 
+            # Para o Ex 5, precisamos de refazer o split com 'current_seed'.
+            
+            # Temos de ir buscar aos dados originais carregados no início da main
+            if ds_name == "FEATURES": original_data = data_features
+            else: original_data = data_embeds
+            
+            X = original_data[:, IDX_FEATS:]
+            y = original_data[:, IDX_LABEL]
+            p = original_data[:, IDX_PART]
+            
+            # 1. Split Variável (Seed muda a cada iteração)
+            split_res = split_between_subjects(X, y, p, seed=current_seed)
+            if split_res is None: continue
+            X_tr, y_tr, X_val, y_val, X_te, y_te = split_res
+            
+            # 2. Pipeline
+            scenarios = process_pipeline_scenarios(X_tr, X_val, X_te, y_tr)
+            
+            for sc_name, sc_data in scenarios.items():
+                if sc_data is None: continue
+                
+                X_train_s, X_val_s, X_test_s = sc_data
+                
+                # 5.1 Tuning & Retrain
+                acc_test, best_k, _, _ = tune_and_retrain(
+                    X_train_s, y_tr, X_val_s, y_val, X_test_s, y_te, 
+                    k_values=K_VALUES_LIST
+                )
+                
+                # Guardar histórico
+                key = f"{ds_name} - {sc_name}"
+                if key not in results_history: results_history[key] = []
+                results_history[key].append(acc_test)
+                
+                print(f"   [{key}] k={best_k}, Acc={acc_test:.4f}")
+
+    # 5.3 Testes de Hipótese
+    perform_hypothesis_testing(results_history)
+
+    print("\nPipeline Final Concluída!")
 
 
 if __name__ == "__main__":
