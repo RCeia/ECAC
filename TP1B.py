@@ -537,6 +537,38 @@ def perform_hypothesis_testing(results_dict):
     print("="*60 + "\n")
 
 
+def plot_results_distribution(results_dict, output_dir):
+    """
+    Gera um Boxplot com os pontos individuais (jitter) sobrepostos
+    para visualizar a distribuição estatística da Accuracy.
+    """
+    print("\n   -> A gerar gráfico de distribuição de resultados...")
+    
+    models = list(results_dict.keys())
+    data = [results_dict[m] for m in models]
+    
+    plt.figure(figsize=(12, 7))
+    
+    # 1. Boxplot (Mostra a mediana e quartis)
+    plt.boxplot(data, labels=models, showfliers=False, patch_artist=True, 
+                boxprops=dict(facecolor='lightblue', alpha=0.5))
+    
+    # 2. Scatter Plot (Mostra os 20 pontos reais de cada modelo)
+    # Adicionamos um pequeno ruído aleatório no eixo X (jitter) para os pontos não ficarem sobrepostos
+    for i, model_scores in enumerate(data):
+        x = np.random.normal(i + 1, 0.04, size=len(model_scores))
+        plt.plot(x, model_scores, 'r.', alpha=0.6)
+        
+    plt.title(f"Distribuição de Performance (Accuracy) - {len(data[0])} Repetições")
+    plt.ylabel("Accuracy")
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    plt.xticks(rotation=45, ha='right')
+    
+    filename = os.path.join(output_dir, "5_distribuicao_resultados.png")
+    plt.tight_layout()
+    plt.savefig(filename)
+    plt.close()
+    print(f"      Gráfico guardado em: {filename}")
 
 # ------------------------------
 # Main
@@ -636,12 +668,12 @@ def main():
     print("\nPipeline concluída! Dados prontos em 'ready_data'.")
 
     # =================================================================
-    # EXERCÍCIO 4 & 5.1: MODEL LEARNING & EVALUATION
+    # EXERCÍCIO 4 e 5: AVALIAÇÃO COM REPETIÇÕES & TESTES
     # =================================================================
     print("\n=== 5. Evaluation Loop (Tuning, Retrain & Stats) ===")
     
-    # Aumentar N para ter validade estatística (mínimo 5, ideal 10-30)
-    N_REPEATS = 5 
+    # --- ALTERAÇÃO: 20 Repetições ---
+    N_REPEATS = 20 
     K_VALUES_LIST = [1, 3, 5, 7, 9, 11, 13, 15]
     
     # Dicionário para acumular resultados: {'FEATURES-A': [0.62, 0.61...], ...}
@@ -653,10 +685,6 @@ def main():
         
         for ds_name in ready_data:
             # Recuperar dados brutos para fazer novo split
-            # Nota: ready_data guardava o split fixo da seed 42. 
-            # Para o Ex 5, precisamos de refazer o split com 'current_seed'.
-            
-            # Temos de ir buscar aos dados originais carregados no início da main
             if ds_name == "FEATURES": original_data = data_features
             else: original_data = data_embeds
             
@@ -678,17 +706,22 @@ def main():
                 X_train_s, X_val_s, X_test_s = sc_data
                 
                 # 5.1 Tuning & Retrain
+                # Nota: Certifique-se que está a usar a versão da função que devolve 4 valores!
                 acc_test, best_k, _, _ = tune_and_retrain(
                     X_train_s, y_tr, X_val_s, y_val, X_test_s, y_te, 
                     k_values=K_VALUES_LIST
                 )
                 
                 # Guardar histórico
-                key = f"{ds_name} - {sc_name}"
+                key = f"{ds_name}-{sc_name}"
                 if key not in results_history: results_history[key] = []
                 results_history[key].append(acc_test)
                 
                 print(f"   [{key}] k={best_k}, Acc={acc_test:.4f}")
+
+    # --- Gráfico da Distribuição (NOVO) ---
+    if results_history:
+        plot_results_distribution(results_history, outdir)
 
     # 5.3 Testes de Hipótese
     perform_hypothesis_testing(results_history)
