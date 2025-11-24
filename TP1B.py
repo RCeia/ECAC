@@ -9,7 +9,6 @@ from sklearn.neighbors import NearestNeighbors
 import random
 from scipy.stats import ttest_rel, skew, kurtosis, entropy
 
-# --- Novos Imports para Ex 3 ---
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -118,7 +117,7 @@ def load_features_dataset(file_path):
         return None, None
 
 # ------------------------------
-# 1.1 Plots
+# 1.1 
 # ------------------------------
 def plot_class_balance(labels_all, output_path, title="Distribuição", ylabel="Contagem"):
     classes, counts = np.unique(labels_all, return_counts=True)

@@ -415,10 +415,12 @@ def plotar_clusters_3d(dados, atribuicoes, centroides, indices_outliers, titulo)
     plt.savefig(os.path.join(outdir, next_plot_id()))
     plt.close()
 """"""
-# ------------------------------
-# 4.1 – Significância estatística e normalidade por atividade
-#     Variáveis usadas: módulos (acel, giro, mag) – já calculados.
-# ------------------------------
+# -------------
+# Exercício 4.1
+# -------------
+
+# Significância estatística e normalidade por atividade
+# Variáveis usadas: módulos (acel, giro, mag) – já calculados.
 
 def ks_normality_by_activity(values, labels):
     """
@@ -474,9 +476,11 @@ def test_means_across_activities(values, labels, alpha=0.05):
             _, pvalue = stats.kruskal(*groups)
     return {"method": method, "pvalue": float(pvalue)}
 
-# -------------------------------------------------
-# 4.2 – Extração de features temporais e espectrais
-# -------------------------------------------------
+# -------------
+# Exercício 4.2
+# -------------
+
+# Extração de features temporais e espectrais
 
 def time_features(x):
     x = np.asarray(x)
@@ -628,9 +632,12 @@ def sliding_window_features(signal_array, labels_array, participant_array, devic
     feature_names = list(extract_window_features(signal_array[:win_size], fs=fs).keys())
     
     return np.array(X_list, dtype=float), np.array(y_list, dtype=float), np.array(p_list, dtype=int), feature_names
-# ------------------------------
-# 4.3 – PCA
-# ------------------------------
+
+# -------------
+# Exercício 4.3
+# -------------
+
+#  PCA
 def run_pca(X, feature_names=None, var_norm=True, top_k=5):
     """
     Executa PCA sobre o feature set X e imprime as variáveis com maior peso
@@ -665,9 +672,11 @@ def run_pca(X, feature_names=None, var_norm=True, top_k=5):
     return {"scaler": scaler, "pca": pca, "Z": Z}
 
 
-# ------------------------------
-# 4.4 – Variância explicada + nº de dimensões para 75%
-# ------------------------------
+# --------------
+# Exercício 4.4
+# --------------
+
+# Variância explicada + nº de dimensões para 75%
 
 def num_components_for_variance(pca, threshold=0.75):
     cum = np.cumsum(pca.explained_variance_ratio_)
@@ -685,9 +694,11 @@ def plot_variance_explained(pca, out_path):
     plt.grid(True, linestyle="--", alpha=0.6)
     savefig(out_path)
 
-# ------------------------------
-# 4.5 – Fisher Score & ReliefF
-# ------------------------------
+# -------------
+# Exercício 4.5
+# -------------
+
+# Fisher Score & ReliefF
 
 def fisher_score(X, y):
     """
@@ -769,9 +780,11 @@ def reliefF(X, y, n_neighbors=10, n_samples=200):
     scores = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
     return scores
 
-# ---------------------------------------------------
-# 4.6 – Top features (Fisher vs ReliefF) + utilidades
-# ---------------------------------------------------
+# -------------
+# Exercício 4.6 
+# -------------
+
+# Top features (Fisher vs ReliefF) + utilidades
 
 def top_k_features(scores, feature_names, k=10):
     idx = np.argsort(scores)[::-1][:k]
@@ -788,9 +801,12 @@ def barplot_feature_importance(pairs, title, out_path):
     plt.grid(axis='y', linestyle="--", alpha=0.6)
     savefig(out_path)
 
-# ----------------------------------------------------
-# 4.4.1 e 4.6.1 – Funções de transformação de features
-# ----------------------------------------------------
+# ------------------------
+# Exercícios 4.4.1 e 4.6.1 
+# ------------------------
+
+# Funções de transformação de features
+
 
 def transform_with_pca(X_row, pca_bundle, k):
     """
@@ -810,9 +826,9 @@ def compress_with_mask(X_row, selected_indices):
     X_row = np.asarray(X_row).reshape(-1)
     return X_row[selected_indices]
 
-# ------------------------------
+# ----
 # Main
-# ------------------------------
+# ----
 
 def main():
     pasta_base = "FORTH_TRACE_DATASET"
@@ -829,9 +845,9 @@ def main():
     todos_dados_completos = []
     fs = 50.0
     
-    # ------------------------------
+    # -----------
     # Exercicio 2
-    # ------------------------------
+    # -----------
 
     # Carregar dados e calcular módulos
 
@@ -918,9 +934,11 @@ def main():
     print_densidade_legivel(dens_giro, "Giroscópio (pulso direito)")
     print_densidade_legivel(dens_mag, "Magnetómetro (pulso direito)")
     
-    # ------------------------------
-    # Exercício 3.3 e 3.4 - Identificação e visualização de outliers
-    # ------------------------------
+    # -------------------
+    # Exercício 3.3 e 3.4
+    # -------------------
+
+    # Identificação e visualização de outliers
 
     print("\n--- Exercício 3.3 e 3.4: Identificação e Visualização de Outliers ---")
     print("\n--- Exercício 3.3 e 3.4: Identificação e Visualização de Outliers ---")
@@ -1038,9 +1056,10 @@ def main():
     # -----------
     
     print("\\n--- Objetivo 4: Extração de features, PCA e Feature Selection (guardado em outputs/) ---")
-    # ---------------
-    # Exercício 4.1.
-    # ---------------
+    
+    # -------------
+    # Exercício 4.1
+    # -------------
 
     # Normalidade + comparação de médias por atividade
 
@@ -1062,9 +1081,9 @@ def main():
         rows.append([name, results_41[name]["means_test"]["method"], results_41[name]["means_test"]["pvalue"]])
     save_csv(os.path.join(outdir, "4_1_means_comparison.csv"), ["variable","method","pvalue"], rows)
     
-    # ---------------
-    # Exercício 4.2.
-    # ---------------
+    # -------------
+    # Exercício 4.2
+    # -------------
 
     # Extração de features por janelas nos módulos
 
@@ -1098,9 +1117,9 @@ def main():
     else:
         print("Erro: Não foi possível extrair features (arrays vazios).")
 
-    # ---------------------
-    # Exercício 4.3. & 4.4.
-    # ---------------------
+    # --------------------
+    # Exercícios 4.3 & 4.4
+    # --------------------
 
     # PCA, variância explicada e nº de componentes
     if X_all.shape[0] >= 2:
@@ -1122,9 +1141,9 @@ def main():
             z_example = Z[0, :k75].tolist()
             save_csv(os.path.join(outdir, "4_4_1_pca_example_row.csv"), [f"pc{i+1}" for i in range(k75)], [z_example])
 
-        # ---------------
-        # Exercício 4.5.
-        # ---------------
+        # -------------
+        # Exercício 4.5
+        # -------------
         
         # Fisher Score & ReliefF
 
@@ -1134,9 +1153,9 @@ def main():
         save_csv(os.path.join(outdir, "4_5_scores_fisher.csv"), feat_names_all, [fisher.tolist()])
         save_csv(os.path.join(outdir, "4_5_scores_reliefF.csv"), feat_names_all, [relief.tolist()])
 
-        # ---------------
-        # Exercício 4.6.
-        # ---------------
+        # -------------
+        # Exercício 4.6
+        # -------------
 
         # Top-10 features e comparação
 
@@ -1151,9 +1170,9 @@ def main():
         barplot_feature_importance(top10_fisher, "Top-10 Fisher Score", os.path.join(outdir, "4_6_top10_fisher.png"))
         barplot_feature_importance(top10_relief, "Top-10 ReliefF", os.path.join(outdir, "4_6_top10_reliefF.png"))
 
-        # ---------------
-        # Exercício 4.6.
-        # ---------------
+        # -------------
+        # Exercício 4.6
+        # -------------
 
         # 4.6.1: Exemplo de compressão por seleção (top-10 de Fisher)
 
