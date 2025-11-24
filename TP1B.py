@@ -8,6 +8,13 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 import random
 from scipy.stats import ttest_rel, skew, kurtosis, entropy
+from scipy import stats
+# Adicionar junto aos outros imports do sklearn
+from sklearn.ensemble import RandomForestClassifier
+
+# Adicionar aos imports existentes do sklearn
+from sklearn.svm import SVC
+from sklearn.ensemble import GradientBoostingClassifier
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -735,6 +742,299 @@ def train_deployable_model(X, y, best_k, use_pca=False):
     return ActivityDeployer(scaler, clf, pca_model)
 
 
+# =============================================================================
+# EXERCÍCIO 7: OTIMIZAÇÃO (Outliers & Data Augmentation) - VERSÃO ROBUSTA
+# =============================================================================
+
+def remove_outliers_zscore_per_class(X, y, k=3):
+    """
+    Remove outliers utilizando Z-Score (k=3) individualmente por classe.
+    Versão robusta contra NaNs e colunas com desvio padrão zero.
+    """
+    X_clean_list = []
+    y_clean_list = []
+    
+    classes = np.unique(y)
+    
+    for c in classes:
+        mask_c = (y == c)
+        X_c = X[mask_c]
+        
+        # Se houver poucos dados, não removemos nada (segurança)
+        if len(X_c) < 5:
+            X_clean_list.append(X_c)
+            y_clean_list.append(y[mask_c])
+            continue
+
+        # Calcular Z-Score
+        # Se uma coluna tiver desvio padrão 0, o zscore dá NaN.
+        # nan_policy='omit' pode não ser suficiente, tratamos manualmente.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            z_scores = stats.zscore(X_c, axis=0)
+        
+        # Substituir NaNs (que vêm de divisão por zero) por 0.0
+        # Isto significa: "se a feature é constante, não é outlier"
+        z_scores = np.nan_to_num(z_scores, nan=0.0)
+        z_scores = np.abs(z_scores)
+        
+        # Manter apenas linhas onde TODAS as features têm z < k
+        mask_keep = (z_scores < k).all(axis=1)
+        
+        # Se a limpeza for remover TUDO (erro comum), mantemos o original
+        if np.sum(mask_keep) == 0:
+            X_clean_list.append(X_c)
+            y_clean_list.append(y[mask_c])
+        else:
+            X_clean_list.append(X_c[mask_keep])
+            y_clean_list.append(y[mask_c][mask_keep])
+        
+    if not X_clean_list: return X, y
+    
+    X_clean = np.vstack(X_clean_list)
+    y_clean = np.concatenate(y_clean_list)
+    
+    return X_clean, y_clean
+
+def augment_with_smote_strategy(X, y, strategy_ratio=0.25):
+    """
+    Adiciona 25% da diferença para a classe maioritária usando SMOTE.
+    Protegido contra arrays vazios.
+    """
+    # --- PROTEÇÃO CONTRA ERRO ---
+    if X is None or len(X) == 0 or len(y) == 0:
+        return X, y
+        
+    unique, counts = np.unique(y, return_counts=True)
+    
+    # Se só houver 1 classe ou nenhuma, não dá para balancear/calcular max
+    if len(unique) < 2:
+        return X, y
+    
+    max_count = np.max(counts) # Agora é seguro chamar max
+    
+    X_aug_list = [X]
+    y_aug_list = [y]
+    
+    generated_count = 0
+    
+    for cls, count in zip(unique, counts):
+        gap = max_count - count
+        n_to_generate = int(gap * strategy_ratio)
+        
+        # Só gera se valer a pena (>1 amostra) e se houver dados suficientes para vizinhos
+        if n_to_generate > 1:
+            X_class = X[y == cls]
+            
+            # Precisamos de pelo menos 2 amostras para calcular vizinhos
+            if len(X_class) < 2: continue
+
+            # Tenta gerar
+            try:
+                # Reutiliza a função do Ex 1.2
+                # Ajustamos k_neighbors dinamicamente para evitar erro
+                k_neigh = min(5, len(X_class) - 1)
+                if k_neigh < 1: k_neigh = 1
+                
+                synth = generate_smote_samples(X_class, k_samples=n_to_generate, k_neighbors=k_neigh)
+                
+                if synth is not None and len(synth) > 0:
+                    X_aug_list.append(synth)
+                    y_synth = np.full(len(synth), cls)
+                    y_aug_list.append(y_synth)
+                    generated_count += 1
+            except Exception:
+                # Se o SMOTE falhar numa classe específica, ignora e continua
+                continue
+    
+    if generated_count > 0:
+        return np.vstack(X_aug_list), np.concatenate(y_aug_list)
+        
+    return X, y    
+
+# =============================================================================
+# MODELO HIERÁRQUICO (CLASSE WRAPPER)
+# =============================================================================
+
+class HierarchicalClassifier:
+    """
+    Classificador 'Two-Stage' compatível com sklearn.
+    - Estágio 1: Decide se é Estático ou Dinâmico.
+    - Estágio 2: Usa especialistas para decidir a classe final.
+    """
+    def __init__(self, random_state=42):
+        self.random_state = random_state
+        # Generalista: Random Forest (Robusto para decisões gerais)
+        self.clf_general = RandomForestClassifier(n_estimators=100, random_state=random_state)
+        
+        # Especialista Estático (1,2,3): Gradient Boosting (Bom para detalhes finos Sit vs SitTalk)
+        self.clf_static = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=random_state)
+        
+        # Especialista Dinâmico (4,5,6,7): Random Forest (Bom para variância alta de movimento)
+        self.clf_dynamic = RandomForestClassifier(n_estimators=100, random_state=random_state)
+        
+        self.static_classes = [1, 2, 3]
+        self.dynamic_classes = [4, 5, 6, 7]
+
+    def _get_group(self, y):
+        # 0 = Estático, 1 = Dinâmico
+        groups = np.zeros_like(y)
+        groups[np.isin(y, self.dynamic_classes)] = 1
+        return groups
+
+    def fit(self, X, y):
+        # 1. Treinar Generalista
+        y_groups = self._get_group(y)
+        self.clf_general.fit(X, y_groups)
+        
+        # 2. Treinar Especialista Estático
+        mask_static = np.isin(y, self.static_classes)
+        if np.sum(mask_static) > 0:
+            self.clf_static.fit(X[mask_static], y[mask_static])
+            
+        # 3. Treinar Especialista Dinâmico
+        mask_dynamic = np.isin(y, self.dynamic_classes)
+        if np.sum(mask_dynamic) > 0:
+            self.clf_dynamic.fit(X[mask_dynamic], y[mask_dynamic])
+        return self
+
+    def predict(self, X):
+        # 1. Previsão do Grupo
+        group_preds = self.clf_general.predict(X)
+        final_preds = np.zeros_like(group_preds)
+        
+        # 2. Previsão Especializada
+        # Onde é estático (0)
+        mask_static = (group_preds == 0)
+        if np.any(mask_static):
+            final_preds[mask_static] = self.clf_static.predict(X[mask_static])
+            
+        # Onde é dinâmico (1)
+        mask_dynamic = (group_preds == 1)
+        if np.any(mask_dynamic):
+            final_preds[mask_dynamic] = self.clf_dynamic.predict(X[mask_dynamic])
+            
+        return final_preds
+
+# =============================================================================
+# FUNÇÃO DE COMPARAÇÃO DE 4 MODELOS
+# =============================================================================
+
+# =============================================================================
+# COMPARAÇÃO ESTATÍSTICA DE 4 MODELOS (ATUALIZADA)
+# =============================================================================
+
+def compare_4_models_statistical(X_raw, y_raw, p_raw, n_repeats=5):
+    """
+    Roda n_repeats iterações de treino/teste para 4 modelos.
+    Imprime tabela detalhada e gera Box Plot comparativo.
+    """
+    print(f"\n>>> A iniciar Comparação de 4 Modelos ({n_repeats} iterações)...")
+    
+    # 1. Definir os Candidatos
+    models = {
+        "Random Forest": RandomForestClassifier(n_estimators=200, class_weight='balanced', n_jobs=-1, random_state=42),
+        "SVM (RBF)": SVC(kernel='rbf', C=1.0, class_weight='balanced', random_state=42),
+        "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42),
+        "Hierárquico (Otimizado)": HierarchicalClassifier(random_state=42)
+    }
+    
+    # Dicionário para guardar listas de scores
+    results = {name: [] for name in models.keys()}
+    
+    # 2. Loop de Avaliação
+    for i in range(n_repeats):
+        seed = 42 + i
+        
+        # Split Consistente (Mesma seed para todos na mesma iteração)
+        split_res = split_between_subjects(X_raw, y_raw, p_raw, seed=seed)
+        if split_res is None: continue
+        X_tr, y_tr, X_val, y_val, X_te, y_te = split_res
+        
+        # Pipeline Normalização
+        scaler = StandardScaler()
+        X_tr_norm = scaler.fit_transform(X_tr)
+        X_val_norm = scaler.transform(X_val)
+        X_te_norm = scaler.transform(X_te)
+        
+        # Juntar Treino + Validação
+        X_full = np.vstack((X_tr_norm, X_val_norm))
+        y_full = np.concatenate((y_tr, y_val))
+        
+        # Treinar e Testar cada modelo
+        for name, clf in models.items():
+            clf.fit(X_full, y_full)
+            y_pred = clf.predict(X_te_norm)
+            acc = accuracy_score(y_te, y_pred)
+            results[name].append(acc)
+            
+        # Feedback de progresso
+        print(f"\r   -> Iteração {i+1}/{n_repeats} concluída.", end="")
+
+    # 3. Imprimir Tabela de Resultados Detalhada
+    print("\n\n" + "="*80)
+    print(f"=== RESULTADOS DETALHADOS POR ITERAÇÃO (Accuracy) ===")
+    print("="*80)
+    
+    # Cabeçalho da Tabela
+    header = f"{'Iter':<5} | " + " | ".join([f"{name:<23}" for name in models.keys()])
+    print(header)
+    print("-" * len(header))
+    
+    # Linhas da Tabela
+    for i in range(len(results["Random Forest"])): # Usa o tamanho da lista do primeiro modelo
+        row_str = f"{i+1:<5} | "
+        row_str += " | ".join([f"{results[name][i]:.4f}" for name in models.keys()])
+        print(row_str)
+    print("-" * len(header))
+    
+    # 4. Análise Estatística (Médias e Testes)
+    print("\n" + "="*60)
+    print("=== ANÁLISE ESTATÍSTICA FINAL ===")
+    print("="*60)
+    
+    means = {m: np.mean(s) for m, s in results.items()}
+    stds = {m: np.std(s) for m, s in results.items()}
+    best_model = max(means, key=means.get)
+    best_scores = results[best_model]
+    
+    print(f"🏆 VENCEDOR: {best_model}")
+    print(f"   Média: {means[best_model]:.4f} (+/- {stds[best_model]:.4f})")
+    print("-" * 60)
+    
+    # Testes de Hipótese (Best vs Others)
+    for name, scores in results.items():
+        if name == best_model: continue
+        
+        t_stat, p_val = ttest_rel(best_scores, scores)
+        diff = means[best_model] - means[name]
+        signif = "SIM ✅" if p_val < 0.05 else "NÃO ❌"
+        
+        print(f"vs {name:<23} | Dif: +{diff:.4f} | p={p_val:.4f} | Sig? {signif}")
+
+    # 5. Visualização (Box Plot Comparativo)
+    print("\n-> A gerar Box Plot comparativo...")
+    plt.figure(figsize=(12, 7))
+    
+    # Boxplot
+    plt.boxplot(results.values(), labels=results.keys(), patch_artist=True,
+                boxprops=dict(facecolor="lightgreen", alpha=0.6),
+                medianprops=dict(color="black"))
+    
+    # Adicionar pontos individuais (jitter) para ver a dispersão real
+    for i, (name, scores) in enumerate(results.items()):
+        y = scores
+        x = np.random.normal(i + 1, 0.04, size=len(y)) # Adiciona ruído no eixo X
+        plt.plot(x, y, 'r.', alpha=0.5)
+        
+    plt.title(f"Comparação de Performance (4 Modelos) - {n_repeats} Repetições")
+    plt.ylabel("Accuracy (Teste)")
+    plt.grid(True, axis='y', linestyle='--', alpha=0.3)
+    
+    path_img = os.path.join(outdir, "comparacao_4_modelos.png")
+    savefig(path_img)
+    print(f"Gráfico guardado em: {path_img}")
+
+    
 # ------------------------------
 # Main
 # ------------------------------
@@ -947,6 +1247,62 @@ def main():
     else:
         print("Erro: Não existem dados de Features para treinar o modelo de produção.")
 
+    # =================================================================
+    # EXERCÍCIO EXTRA 1: Teste de Subset (Sem confusões)
+    # =================================================================
+    print("\n=== EXTRA 1: Avaliação com Subset (Sem Atividades 3 e 5) ===")
+    
+    # Definir atividades a manter
+    KEEP_LABELS = [1, 2, 4, 6, 7]
+    
+    if data_features is not None:
+        print(f"Filtrando apenas atividades: {KEEP_LABELS}")
+        
+        # 1. Filtrar
+        mask_subset = np.isin(data_features[:, IDX_LABEL], KEEP_LABELS)
+        data_sub = data_features[mask_subset]
+        
+        X_sub = data_sub[:, IDX_FEATS:]
+        y_sub = data_sub[:, IDX_LABEL]
+        p_sub = data_sub[:, IDX_PART]
+        
+        # 2. Split (Seed fixa para teste rápido)
+        split_res = split_between_subjects(X_sub, y_sub, p_sub, seed=42)
+        
+        if split_res is not None:
+            X_tr, y_tr, X_val, y_val, X_te, y_te = split_res
+            
+            # 3. Pipeline (Normalização)
+            scaler = StandardScaler()
+            X_tr_norm = scaler.fit_transform(X_tr)
+            X_val_norm = scaler.transform(X_val)
+            
+            # 4. Treino e Avaliação (Usando k=15 que foi o melhor antes)
+            print("Treinando k-NN (k=15) no subset...")
+            clf = KNeighborsClassifier(n_neighbors=15)
+            clf.fit(X_tr_norm, y_tr)
+            
+            y_pred = clf.predict(X_val_norm)
+            
+            calculate_metrics(y_val, y_pred, set_name="SUBSET 1-2-4-6-7")
 
+        # =================================================================
+        # COMPARAÇÃO FINAL: 4 MODELOS
+        # =================================================================
+        print("\n=== COMPARAÇÃO FINAL DE 4 MODELOS (RF, SVM, GB, Hierárquico) ===")
+        
+        if "FEATURES" in ready_data:
+            # Dados Base
+            X_raw = data_features[:, IDX_FEATS:]
+            y_raw = data_features[:, IDX_LABEL]
+            p_raw = data_features[:, IDX_PART]
+            
+            # Executar a função de comparação (20 iterações)
+            compare_4_models_statistical(X_raw, y_raw, p_raw, n_repeats=5)
+                
+        else:
+            print("Erro: Dados FEATURES indisponíveis.")
+            
+    
 if __name__ == "__main__":
     main()
