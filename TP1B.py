@@ -123,9 +123,9 @@ def load_features_dataset(file_path):
         print(f"Erro ao carregar dataset: {e}")
         return None, None
 
-# ---
-# 1.1
-# ---
+# -------------
+# Exercício 1.1
+# -------------
 
 def plot_class_balance(labels_all, output_path, title="Distribuição", ylabel="Contagem"):
     classes, counts = np.unique(labels_all, return_counts=True)
@@ -142,9 +142,9 @@ def plot_class_balance(labels_all, output_path, title="Distribuição", ylabel="
     plt.xticks(classes); plt.grid(axis='y', linestyle='--', alpha=0.7)
     savefig(output_path)
 
-# ---------
-# 1.2 e 1.3
-# ---------
+# --------------------
+# Exercícios 1.2 e 1.3
+# --------------------
 
 # SMOTE Logic
 
@@ -174,8 +174,8 @@ def plot_smote_visualization(data_participant, synthetic_features, activity_targ
     plt.xlabel(f1); plt.ylabel(f2); plt.legend(); plt.grid(True, alpha=0.5)
     savefig(output_path)
 
-# --------------
-# EXERCÍCIO 2.1
+# -------------
+# Exercício 2.1
 # -------------
 
 # EMBEDDINGS EXTRACTOR (Opção C - Stacking)
@@ -257,9 +257,11 @@ def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
     else:
         print("Aviso: Nenhum embedding gerado.")
 
-# =============================================================================
-# EXERCÍCIO 3: SPLITTING E PIPELINE
-# =============================================================================
+# -----------
+# Exercício 3
+# -----------
+
+# SPLITTING E PIPELINE
 
 # --- Função ReliefF (necessária para o Cenário C) ---
 def reliefF(X, y, n_neighbors=10, n_samples=200):
@@ -307,8 +309,12 @@ def reliefF(X, y, n_neighbors=10, n_samples=200):
 
     return scores
 
+# -------------
+# Exercício 3.1
+# -------------
 
-# --- 3.1 Within-Subject Split ---
+# Within-Subject Split
+
 def split_within_subjects(X, y, participants, seed=42):
     """
     Divide 60% Treino, 20% Val, 20% Teste, misturando dados de todos os participantes.
@@ -325,7 +331,12 @@ def split_within_subjects(X, y, participants, seed=42):
     print(f"   [Split 3.1 Within] Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
     return X_train, y_train, X_val, y_val, X_test, y_test
 
-# --- 3.2 Between-Subject Split ---
+# -------------
+# Exercício 3.2
+# -------------
+
+# Between-Subject Split 
+
 def split_between_subjects(X, y, participants, seed=42):
     """
     Divide por participante: 9 Treino, 3 Validação, 3 Teste.
@@ -351,8 +362,12 @@ def split_between_subjects(X, y, participants, seed=42):
     print(f"   [Split 3.2 Between] Train IDs: {train_ids} | Val: {val_ids} | Test: {test_ids}")
     return X[mask_train], y[mask_train], X[mask_val], y[mask_val], X[mask_test], y[mask_test]
 
+# -------------
+# Exercício 3.4
+# -------------
 
-# --- 3.4 Pipeline ---
+# Pipeline
+
 def process_pipeline_scenarios(X_train, X_val, X_test, y_train):
     """
     Gera os cenários A (Normal), B (PCA 90%) e C (ReliefF Top 15).
@@ -395,11 +410,18 @@ def process_pipeline_scenarios(X_train, X_val, X_test, y_train):
     
     return results
 
-# =============================================================================
-# EXERCÍCIO 4: MODEL LEARNING (k-NN)
-# =============================================================================
+# -----------
+# Exercício 4
+# -----------
 
-# --- 4.1 Implementação Customizada do k-NN ---
+# MODEL LEARNING (k-NN)
+
+#--------------
+# Exercício 4.1 
+#--------------
+
+# Implementação Customizada do k-NN
+
 class MyKNN:
     """
     Implementação manual de k-NN para satisfazer o requisito 4.1.
@@ -458,9 +480,11 @@ def calculate_metrics(y_true, y_pred, set_name="Validation"):
     
     return acc, f1
 
-# =============================================================================
-# EXERCÍCIO 5.1: MODEL LEARNING (k-NN)
-# =============================================================================
+# -------------
+# EXERCÍCIO 5.1
+# -------------
+
+#  MODEL LEARNING (k-NN)
 
 def tune_and_retrain(X_train, y_train, X_val, y_val, X_test, y_test, k_values=[1,3,5,7,9,11,13]):
     """
@@ -583,9 +607,11 @@ def plot_results_distribution(results_dict, output_dir):
     print(f"      Gráfico guardado em: {filename}")
 
 
-# =============================================================================
-# EXERCÍCIO 6: DEPLOYMENT (Classificação de Novos Dados Brutos)
-# =============================================================================
+# -----------
+# Exercício 6
+# -----------
+
+# DEPLOYMENT (Classificação de Novos Dados Brutos)
 
 # --- Funções Auxiliares de Extração (Versão compacta para Produção) ---
 def _deploy_time_features(x):
@@ -742,9 +768,11 @@ def train_deployable_model(X, y, best_k, use_pca=False):
     return ActivityDeployer(scaler, clf, pca_model)
 
 
-# =============================================================================
-# EXERCÍCIO 7: OTIMIZAÇÃO (Outliers & Data Augmentation) - VERSÃO ROBUSTA
-# =============================================================================
+# -----------
+# Exercício 7 
+# -----------
+
+# OTIMIZAÇÃO (Outliers & Data Augmentation) - VERSÃO ROBUSTA
 
 def remove_outliers_zscore_per_class(X, y, k=3):
     """
