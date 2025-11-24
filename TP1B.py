@@ -116,9 +116,10 @@ def load_features_dataset(file_path):
         print(f"Erro ao carregar dataset: {e}")
         return None, None
 
-# ------------------------------
-# 1.1 
-# ------------------------------
+# ---
+# 1.1
+# ---
+
 def plot_class_balance(labels_all, output_path, title="Distribuição", ylabel="Contagem"):
     classes, counts = np.unique(labels_all, return_counts=True)
     print(f"\nContagem ({ylabel}):")
@@ -134,9 +135,12 @@ def plot_class_balance(labels_all, output_path, title="Distribuição", ylabel="
     plt.xticks(classes); plt.grid(axis='y', linestyle='--', alpha=0.7)
     savefig(output_path)
 
-# ------------------------------
-# 1.2 e 1.3 SMOTE Logic
-# ------------------------------
+# ---------
+# 1.2 e 1.3
+# ---------
+
+# SMOTE Logic
+
 def generate_smote_samples(features_data, k_samples, k_neighbors=5):
     if len(features_data) < 2: return None
     k_neighbors = min(len(features_data) - 1, k_neighbors)
@@ -163,9 +167,11 @@ def plot_smote_visualization(data_participant, synthetic_features, activity_targ
     plt.xlabel(f1); plt.ylabel(f2); plt.legend(); plt.grid(True, alpha=0.5)
     savefig(output_path)
 
-# =============================================================================
-# EXERCÍCIO 2.1: EMBEDDINGS EXTRACTOR (Opção C - Stacking)
-# =============================================================================
+# --------------
+# EXERCÍCIO 2.1
+# -------------
+
+# EMBEDDINGS EXTRACTOR (Opção C - Stacking)
 
 def gerar_embeddings_dataset(participantes, pasta_base, output_csv):
     """
