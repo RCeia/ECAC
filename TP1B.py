@@ -460,7 +460,13 @@ class MyKNN:
             
         return np.array(predictions)
 
-# --- 4.2 Métricas de Avaliação ---
+# -------------
+# Exercício 4.2
+# -------------
+
+# Métricas de Avaliação 
+
+
 def calculate_metrics(y_true, y_pred, set_name="Validation"):
     """
     Calcula e imprime métricas de classificação: Accuracy, F1, Precision, Recall e Matriz Confusão.
@@ -481,7 +487,7 @@ def calculate_metrics(y_true, y_pred, set_name="Validation"):
     return acc, f1
 
 # -------------
-# EXERCÍCIO 5.1
+# Exercício 5.1
 # -------------
 
 #  MODEL LEARNING (k-NN)
@@ -772,7 +778,7 @@ def train_deployable_model(X, y, best_k, use_pca=False):
 # Exercício 7 
 # -----------
 
-# OTIMIZAÇÃO (Outliers & Data Augmentation) - VERSÃO ROBUSTA
+# OTIMIZAÇÃO (Outliers & Data Augmentation)
 
 def remove_outliers_zscore_per_class(X, y, k=3):
     """
@@ -879,9 +885,7 @@ def augment_with_smote_strategy(X, y, strategy_ratio=0.25):
         
     return X, y    
 
-# =============================================================================
 # MODELO HIERÁRQUICO (CLASSE WRAPPER)
-# =============================================================================
 
 class HierarchicalClassifier:
     """
@@ -943,13 +947,9 @@ class HierarchicalClassifier:
             
         return final_preds
 
-# =============================================================================
-# FUNÇÃO DE COMPARAÇÃO DE 4 MODELOS
-# =============================================================================
 
-# =============================================================================
-# COMPARAÇÃO ESTATÍSTICA DE 4 MODELOS (ATUALIZADA)
-# =============================================================================
+# COMPARAÇÃO ESTATÍSTICA DE 4 MODELOS
+
 
 def compare_4_models_statistical(X_raw, y_raw, p_raw, n_repeats=5):
     """
@@ -1063,18 +1063,24 @@ def compare_4_models_statistical(X_raw, y_raw, p_raw, n_repeats=5):
     print(f"Gráfico guardado em: {path_img}")
 
     
-# ------------------------------
+# ----
 # Main
-# ------------------------------
+# ----
 
 def main():
-    # --- EXERCÍCIO 1.1 ---
+# -----------
+# EXERCÍCIO 1
+# -----------
+# Data Augmentation (Balanço e SMOTE)
+    
+    # Exercício 1.1. Analisar o balanço (Contagem e Ratio Max/Min).
     print("\n=== 1.1 Balanço de Classes (Dados Brutos) ===")
     PASTA_RAW = "FORTH_TRACE_DATASET"
     PARTICIPANTES = list(range(0, 15)) # 0 a 14
     
     raw_labels = []
     for p in PARTICIPANTES:
+        # Nota: O filtro de Atividades <= 7 está implementado dentro de carregar_dados_brutos.
         d = carregar_dados_brutos(p, PASTA_RAW)
         if d is not None: raw_labels.append(d[:, -1])
     
@@ -1082,27 +1088,36 @@ def main():
         all_labels = np.concatenate(raw_labels)
         plot_class_balance(all_labels, os.path.join(outdir, "1_1_balance_raw.png"), "Distribuição Raw")
     
-    # --- EXERCÍCIO 1.3 (SMOTE) ---
+    # Exercício 1.2. Criar a função SMOTE: A função `generate_smote_samples` é implementada FORA da `main`.
+    
+    # Exercício 1.3. Usar e visualizar 3 novas amostras (P3, Ativ 4)
     print("\n=== 1.3 SMOTE (Features) ===")
     path_feats = os.path.join("outputs", "4_2_features_windows.csv")
     h, data = load_features_dataset(path_feats)
     
     if data is not None:
-        data = data[data[:, IDX_LABEL] <= 7] # Filtro
+        data = data[data[:, IDX_LABEL] <= 7] # Filtro de Atividades <= 7
         
-        # P3, Ativ 4
+        # Filtrar P3, Ativ 4
         p3_data = data[data[:, IDX_PART] == 3]
         p3_act4 = p3_data[p3_data[:, IDX_LABEL] == 4]
         
         if len(p3_act4) > 1:
             feats = p3_act4[:, IDX_FEATS:]
+            # Geração das K amostras (3) usando a função do Ex 1.2
             synth = generate_smote_samples(feats, k_samples=3)
             if synth is not None:
+                # Visualização 2D conforme o Ex 1.3
                 plot_smote_visualization(p3_data, synth, 4, (h[IDX_FEATS], h[IDX_FEATS+1]), os.path.join(outdir, "1_3_smote.png"))
         else:
             print("Dados insuficientes para SMOTE (P3, Ativ4).")
 
-    # --- EXERCÍCIO 2.1 (Embeddings) ---
+# -----------
+# EXERCÍCIO 2
+# -----------
+# Embedding Features
+    
+    # Exercício 2.1. Extrair embeddings, resample para 30Hz.
     print("\n=== 2.1 Embeddings Dataset (Stacking) ===")
     path_embed = os.path.join(outdir, "EMBEDDINGS_DATASET.csv")
     
@@ -1111,14 +1126,14 @@ def main():
     else:
         print(f"Ficheiro '{path_embed}' já existe. A saltar extração.")
 
-    # =================================================================
-    # EXERCÍCIO 3: PIPELINE (FEATURES + EMBEDDINGS)
-    # =================================================================
-    print("\n=== 3. Pipeline (Splitting & PCA) ===")
+# -----------
+# EXERCÍCIO 3
+# -----------
+# Data Splitting Strategy (Pipeline)
     
-
+    print("\n=== 3. Data Splitting & Pipeline (3.1, 3.2, 3.4) ===")
+    
     # Preparar Datasets
-    # data (Features) já está carregado. Carregamos Embeddings.
     data_features = data 
     _, data_embeds = load_features_dataset(path_embed)
     
@@ -1138,18 +1153,20 @@ def main():
         y = ds[:, IDX_LABEL]
         p = ds[:, IDX_PART]
         
-        # 3.1 Split Within-Subjects
+        # Exercício 3.1. Split Within-Subjects (60-20-20% por sujeito)
         print(" -> Estratégia 3.1 (Within):")
         split_within_subjects(X, y, p)
         
-        # 3.2 Split Between-Subjects (Preferida)
+        # Exercício 3.2. Split Between-Subjects (por sujeito: 9/3/3)
         print(" -> Estratégia 3.2 (Between):")
         split_res = split_between_subjects(X, y, p)
         
         if split_res is not None:
             X_tr, y_tr, X_val, y_val, X_te, y_te = split_res
             
-            # 3.4 Pipeline (Aplicado apenas à estratégia 3.2)
+            # Exercício 3.3. Discussão: Esta alínea é teórica e deve ser respondida no relatório.
+            
+            # Exercício 3.4. Pipeline (Cenários A, B, C)
             print(" -> Aplicando Pipeline à Estratégia 3.2:")
             scenarios = process_pipeline_scenarios(X_tr, X_val, X_te, y_tr)
             
@@ -1160,16 +1177,24 @@ def main():
         
     print("\nPipeline concluída! Dados prontos em 'ready_data'.")
 
-    # =================================================================
-    # EXERCÍCIO 4 e 5: AVALIAÇÃO COM REPETIÇÕES & TESTES
-    # =================================================================
+# -----------
+# EXERCÍCIO 4
+# -----------
+# Model Learning (k-NN)
+    
+    # Exercício 4.1. Implementar k-NN: A classe `MyKNN` é implementada FORA da `main`.
+    # Exercício 4.2. Criar a função de métricas: A função `calculate_metrics` é implementada FORA da `main`.
+
+# -----------
+# EXERCÍCIO 5
+# -----------
+# Evaluation
+    
     print("\n=== 5. Evaluation Loop (Tuning, Retrain & Stats) ===")
     
-    # --- ALTERAÇÃO: 20 Repetições ---
     N_REPEATS = 1
     K_VALUES_LIST = [1, 3, 5, 7, 9, 11, 13, 15]
     
-    # Dicionário para acumular resultados: {'FEATURES-A': [0.62, 0.61...], ...}
     results_history = {}
 
     for i in range(N_REPEATS):
@@ -1177,7 +1202,7 @@ def main():
         print(f"\n>> Iteração {i+1}/{N_REPEATS} (Seed {current_seed})...")
         
         for ds_name in ready_data:
-            # Recuperar dados brutos para fazer novo split
+            # Recuperar dados brutos para fazer novo split (necessário para a iteração)
             if ds_name == "FEATURES": original_data = data_features
             else: original_data = data_embeds
             
@@ -1185,12 +1210,12 @@ def main():
             y = original_data[:, IDX_LABEL]
             p = original_data[:, IDX_PART]
             
-            # 1. Split Variável (Seed muda a cada iteração)
+            # Split Variável (Seed muda a cada iteração)
             split_res = split_between_subjects(X, y, p, seed=current_seed)
             if split_res is None: continue
             X_tr, y_tr, X_val, y_val, X_te, y_te = split_res
             
-            # 2. Pipeline
+            # Pipeline
             scenarios = process_pipeline_scenarios(X_tr, X_val, X_te, y_tr)
             
             for sc_name, sc_data in scenarios.items():
@@ -1198,68 +1223,60 @@ def main():
                 
                 X_train_s, X_val_s, X_test_s = sc_data
                 
-                # 5.1 Tuning & Retrain
-                # Nota: Certifique-se que está a usar a versão da função que devolve 4 valores!
+                # Exercício 5.1. Hyperparameter tuning & Retrain
                 acc_test, best_k, _, _ = tune_and_retrain(
                     X_train_s, y_tr, X_val_s, y_val, X_test_s, y_te, 
                     k_values=K_VALUES_LIST
                 )
                 
-                # Guardar histórico
-                key = f"{ds_name}-{sc_name}"
-                if key not in results_history: results_history[key] = []
-                results_history[key].append(acc_test)
+                results_history[f"{ds_name}-{sc_name}"] = results_history.get(f"{ds_name}-{sc_name}", [])
+                results_history[f"{ds_name}-{sc_name}"].append(acc_test)
                 
-                print(f"   [{key}] k={best_k}, Acc={acc_test:.4f}")
+                print(f"   [{ds_name}-{sc_name}] k={best_k}, Acc={acc_test:.4f}")
 
-    # --- Gráfico da Distribuição (NOVO) ---
+    # Exercício 5.2. Reportar e analisar resultados (Análise no relatório, Gráfico aqui)
     if results_history:
         plot_results_distribution(results_history, outdir)
 
-    # 5.3 Testes de Hipótese
+    # Exercício 5.3. Hypothesis testing (Com base nas repetições)
     perform_hypothesis_testing(results_history)
 
     print("\nPipeline Final Concluída!")
 
-
-    # =================================================================
-    # EXERCÍCIO 6: DEPLOYMENT (Teste com 'teste.csv')
-    # =================================================================
+# -----------
+# EXERCÍCIO 6
+# -----------
+# Deployment
+    
     print("\n=== 6. Deployment (Aplicação Real) ===")
     
     # --- Configuração do Modelo de Produção ---
     # Escolhemos o modelo FEATURES (Cenário A ou B) pois teve melhor performance no Ex 5.
     # k=15 foi um valor consistente nos seus resultados.
     BEST_K_PROD = 15
-    USAR_PCA = False # Coloque True se preferir o modelo com PCA
+    USAR_PCA = False 
     
+    # Exercício 6. Receber numpy array e devolver a classificação.
     if data_features is not None:
-        # Preparar dados totais para treino
+        # Treinar o modelo final com todos os dados (Deployer)
         X_all = data_features[:, IDX_FEATS:]
         y_all = data_features[:, IDX_LABEL]
-        
-        # 1. Treinar o 'Deployer' (Cria o cérebro do modelo)
         deployer = train_deployable_model(X_all, y_all, best_k=BEST_K_PROD, use_pca=USAR_PCA)
         
-        # 2. Carregar o ficheiro de teste 'teste.csv'
+        # Carregar e testar o ficheiro de exemplo 'teste.csv'
         TEST_FILE = "teste.csv"
         print(f"[Deploy] A procurar ficheiro '{TEST_FILE}' na pasta...")
         
         if os.path.exists(TEST_FILE):
             try:
-                # Carregar ignorando cabeçalhos se existirem
                 raw_input = np.loadtxt(TEST_FILE, delimiter=',')
                 
-                # Validação básica
                 if raw_input.ndim == 2 and raw_input.shape[1] >= 9:
-                    # Garantir que usamos apenas as primeiras 9 colunas (Acc, Gyr, Mag)
-                    # Caso o ficheiro tenha mais (ex: timestamps)
                     input_data = raw_input[:, :9]
                     
                     print(f"[Deploy] Ficheiro carregado com sucesso: {input_data.shape}")
                     print("[Deploy] A processar janelas e extrair features...")
                     
-                    # 3. Previsão
                     predicao = deployer.predict(input_data)
                     
                     print(f"\n>>>O MODELO PREVIU A ATIVIDADE: {predicao}")
@@ -1270,23 +1287,24 @@ def main():
                 print(f"Erro ao ler '{TEST_FILE}': {e}")
         else:
             print(f"Aviso: Ficheiro '{TEST_FILE}' não encontrado.")
-            print("Crie um ficheiro CSV com 256 linhas e 9 colunas para testar esta funcionalidade.")
             
     else:
         print("Erro: Não existem dados de Features para treinar o modelo de produção.")
 
-    # =================================================================
-    # EXERCÍCIO EXTRA 1: Teste de Subset (Sem confusões)
-    # =================================================================
-    print("\n=== EXTRA 1: Avaliação com Subset (Sem Atividades 3 e 5) ===")
+# -----------
+# EXERCÍCIO 7
+# -----------
+# Go Further (Bónus)
     
-    # Definir atividades a manter
-    KEEP_LABELS = [1, 2, 4, 6, 7]
+    # Exercício 7.1. Discussão: Esta alínea é teórica e deve ser respondida no relatório.
     
+    # Exercício 7.2. (BONUS) Implementar e avaliar algumas ideias (e.g., outros modelos).
     if data_features is not None:
+        
+        print("\n=== EXTRA 1: Avaliação com Subset (Sem Atividades 3 e 5) ===")
+        KEEP_LABELS = [1, 2, 4, 6, 7]
         print(f"Filtrando apenas atividades: {KEEP_LABELS}")
         
-        # 1. Filtrar
         mask_subset = np.isin(data_features[:, IDX_LABEL], KEEP_LABELS)
         data_sub = data_features[mask_subset]
         
@@ -1294,18 +1312,15 @@ def main():
         y_sub = data_sub[:, IDX_LABEL]
         p_sub = data_sub[:, IDX_PART]
         
-        # 2. Split (Seed fixa para teste rápido)
         split_res = split_between_subjects(X_sub, y_sub, p_sub, seed=42)
         
         if split_res is not None:
             X_tr, y_tr, X_val, y_val, X_te, y_te = split_res
             
-            # 3. Pipeline (Normalização)
             scaler = StandardScaler()
             X_tr_norm = scaler.fit_transform(X_tr)
             X_val_norm = scaler.transform(X_val)
             
-            # 4. Treino e Avaliação (Usando k=15 que foi o melhor antes)
             print("Treinando k-NN (k=15) no subset...")
             clf = KNeighborsClassifier(n_neighbors=15)
             clf.fit(X_tr_norm, y_tr)
@@ -1313,19 +1328,14 @@ def main():
             y_pred = clf.predict(X_val_norm)
             
             calculate_metrics(y_val, y_pred, set_name="SUBSET 1-2-4-6-7")
-
-        # =================================================================
-        # COMPARAÇÃO FINAL: 4 MODELOS
-        # =================================================================
-        print("\n=== COMPARAÇÃO FINAL DE 4 MODELOS (RF, SVM, GB, Hierárquico) ===")
         
+        # Exercício 7.2. (Outros Classificadores)
+        print("\n=== COMPARAÇÃO FINAL DE 4 MODELOS (RF, SVM, GB, Hierárquico) ===")
         if "FEATURES" in ready_data:
-            # Dados Base
             X_raw = data_features[:, IDX_FEATS:]
             y_raw = data_features[:, IDX_LABEL]
             p_raw = data_features[:, IDX_PART]
             
-            # Executar a função de comparação (20 iterações)
             compare_4_models_statistical(X_raw, y_raw, p_raw, n_repeats=5)
                 
         else:
