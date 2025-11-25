@@ -414,7 +414,128 @@ def plotar_clusters_3d(dados, atribuicoes, centroides, indices_outliers, titulo)
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, next_plot_id()))
     plt.close()
-""""""
+
+# ------------------------------
+# Exercício 3.7.1 - Funções Auxiliares DBSCAN
+# ------------------------------
+
+def run_dbscan(X, eps=0.5, min_samples=5):
+    """
+    Executa o algoritmo DBSCAN.
+    
+    Args:
+        X: Dados normalizados.
+        eps: A distância máxima entre duas amostras para serem consideradas vizinhas.
+        min_samples: O número de amostras numa vizinhança para que um ponto seja considerado um ponto central.
+        
+    Retorna: 
+        labels: Rótulos dos clusters.
+        outliers_mask: Máscara booleana onde True indica ruído/outlier.
+        n_clusters: Quantidade de clusters encontrados (sem contar o ruído).
+    """
+    # n_jobs=-1 utiliza todos os núcleos do CPU disponíveis
+    db = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(X)
+    labels = db.labels_
+    
+    # No sklearn, o rótulo -1 representa ruído (outlier)
+    outliers_mask = (labels == -1)
+    
+    # Calcula o número de clusters ignorando o rótulo -1
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    
+    return labels, outliers_mask, n_clusters
+
+
+def plotar_dbscan_projecoes(dados, labels, outliers_mask, titulo, axis_labels=["X", "Y", "Z"]):
+    """
+    Gera uma figura com 4 subplots:
+    1. Vista 3D
+    2. Projeção xOy
+    3. Projeção xOz
+    4. Projeção yOz
+    
+    Destaca os clusters com cores diferentes e pinta os outliers a vermelho.
+    """
+    fig = plt.figure(figsize=(14, 10))
+    
+    # Identificar clusters únicos (excluindo ruído -1)
+    unique_labels = set(labels)
+    n_clusters = len(unique_labels) - (1 if -1 in labels else 0)
+    
+    # Gerar cores espectrais para os clusters
+    colors = plt.cm.Spectral(np.linspace(0, 1, max(1, n_clusters)))
+    
+    # --- Configuração dos Subplots ---
+    ax3d = fig.add_subplot(221, projection='3d')
+    ax_xy = fig.add_subplot(222)
+    ax_xz = fig.add_subplot(223)
+    ax_yz = fig.add_subplot(224)
+    
+    # --- Loop pelos Clusters (Pontos Normais) ---
+    cluster_idx = 0
+    for k in unique_labels:
+        if k == -1:
+            continue # O ruído é tratado separadamente no fim
+            
+        mask = (labels == k)
+        pts = dados[mask]
+        cor = colors[cluster_idx]
+        cluster_idx += 1
+        
+        lbl = f'Cluster {k}'
+        
+        # Plot 3D
+        ax3d.scatter(pts[:, 0], pts[:, 1], pts[:, 2], s=15, color=cor, alpha=0.6, label=lbl)
+        # Projeções 2D
+        ax_xy.scatter(pts[:, 0], pts[:, 1], s=10, color=cor, alpha=0.5)
+        ax_xz.scatter(pts[:, 0], pts[:, 2], s=10, color=cor, alpha=0.5)
+        ax_yz.scatter(pts[:, 1], pts[:, 2], s=10, color=cor, alpha=0.5)
+
+    # --- Plotar Outliers (Ruído) em VERMELHO ---
+    if np.any(outliers_mask):
+        pts_out = dados[outliers_mask]
+        
+        # 3D
+        ax3d.scatter(pts_out[:, 0], pts_out[:, 1], pts_out[:, 2], 
+                     c='red', marker='x', s=30, label='Outliers')
+        # Projeções 2D
+        ax_xy.scatter(pts_out[:, 0], pts_out[:, 1], c='red', marker='x', s=20)
+        ax_xz.scatter(pts_out[:, 0], pts_out[:, 2], c='red', marker='x', s=20)
+        ax_yz.scatter(pts_out[:, 1], pts_out[:, 2], c='red', marker='x', s=20)
+
+    # --- Decoração dos Eixos ---
+    
+    # 3D
+    ax3d.set_title(f"{titulo} - 3D")
+    ax3d.set_xlabel(axis_labels[0])
+    ax3d.set_ylabel(axis_labels[1])
+    ax3d.set_zlabel(axis_labels[2])
+    # Só mostra legenda se não houver clusters a mais para não tapar o gráfico
+    if n_clusters < 15: 
+        ax3d.legend()
+
+    # xOy
+    ax_xy.set_title(f"Projeção {axis_labels[0]}-{axis_labels[1]}")
+    ax_xy.set_xlabel(axis_labels[0])
+    ax_xy.set_ylabel(axis_labels[1])
+    ax_xy.grid(True, linestyle=':', alpha=0.6)
+    
+    # xOz
+    ax_xz.set_title(f"Projeção {axis_labels[0]}-{axis_labels[2]}")
+    ax_xz.set_xlabel(axis_labels[0])
+    ax_xz.set_ylabel(axis_labels[2])
+    ax_xz.grid(True, linestyle=':', alpha=0.6)
+    
+    # yOz
+    ax_yz.set_title(f"Projeção {axis_labels[1]}-{axis_labels[2]}")
+    ax_yz.set_xlabel(axis_labels[1])
+    ax_yz.set_ylabel(axis_labels[2])
+    ax_yz.grid(True, linestyle=':', alpha=0.6)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, next_plot_id("dbscan_proj")))
+    plt.close()
+
 # -------------
 # Exercício 4.1
 # -------------
@@ -933,7 +1054,7 @@ def main():
     print_densidade_legivel(dens_acel, "Acelerómetro (pulso direito)")
     print_densidade_legivel(dens_giro, "Giroscópio (pulso direito)")
     print_densidade_legivel(dens_mag, "Magnetómetro (pulso direito)")
-    
+    """
     # -------------------
     # Exercício 3.3 e 3.4
     # -------------------
@@ -1050,10 +1171,88 @@ def main():
         dados_mag_3d = np.column_stack((todos_dados_pulso[:, 7], todos_dados_pulso[:, 8], todos_dados_pulso[:, 9]))
         dens_mag_kmeans = densidade_outliers_kmeans(dados_mag_3d, todos_atividades_pulso, n_clusters)
         print_densidade_legivel(dens_mag_kmeans, f"Magnetómetro (pulso direito, {n_clusters} clusters)")
+    """
+
+    # ------------------------------
+    # IMPLEMENTAÇÃO DO DBSCAN (POR SENSOR COM PROJEÇÕES)
+    # ------------------------------
+    print("\n--- Análise de Outliers com DBSCAN (Eixos X, Y, Z) ---")
+
+    # Configurações
+    # eps: Raio de vizinhança. Pode precisar de ajuste fino dependendo do sensor.
+    # min_samples: Densidade mínima.
+    eps_values = [0.3, 0.5] 
+    min_samples_val = 10
+    
+    # --- FATOR DE DOWNSAMPLING ---
+    # Antes usamos 20. Vamos tentar 5 ou 10 para ter mais dados ("increase slightly").
+    # Step 10 usa 10% dos dados. Step 5 usa 20%.
+    step = 15
+    
+    # Dicionário com os dados 3D (X, Y, Z) de cada sensor (apenas pulso direito)
+    # Assumindo que todos_dados_pulso tem colunas: [ID, ax, ay, az, gx, gy, gz, mx, my, mz, ...]
+    datasets_3d = {
+        "Acelerómetro": {
+            "dados": np.column_stack((todos_dados_pulso[:, 1], todos_dados_pulso[:, 2], todos_dados_pulso[:, 3])),
+            "eixos": ["Acc_X", "Acc_Y", "Acc_Z"]
+        },
+        "Giroscópio": {
+            "dados": np.column_stack((todos_dados_pulso[:, 4], todos_dados_pulso[:, 5], todos_dados_pulso[:, 6])),
+            "eixos": ["Gyr_X", "Gyr_Y", "Gyr_Z"]
+        },
+        "Magnetómetro": {
+            "dados": np.column_stack((todos_dados_pulso[:, 7], todos_dados_pulso[:, 8], todos_dados_pulso[:, 9])),
+            "eixos": ["Mag_X", "Mag_Y", "Mag_Z"]
+        }
+    }
+
+    scaler = StandardScaler()
+
+    for sensor_nome, info in datasets_3d.items():
+        print(f"\n>>> Processando DBSCAN: {sensor_nome} (Eixos X,Y,Z)")
+        
+        dados_raw = info["dados"]
+        axis_lbls = info["eixos"]
+        
+        # 1. Amostragem (Downsampling)
+        dados_sampled = dados_raw[::step]
+        print(f"   Amostras: {len(dados_sampled)} (step={step})")
+        
+        # 2. Normalização (Essencial para DBSCAN em dados multivariados)
+        X_norm = scaler.fit_transform(dados_sampled)
+
+        for eps_val in eps_values:
+            try:
+                # 3. Executar DBSCAN
+                labels, mask_outliers, n_clusters = run_dbscan(X_norm, eps=eps_val, min_samples=min_samples_val)
+                
+                num_outliers = np.sum(mask_outliers)
+                densidade = (num_outliers / len(X_norm)) * 100
+                
+                print(f"   [eps={eps_val}] Clusters: {n_clusters} | Outliers: {num_outliers} ({densidade:.2f}%)")
+                
+                if n_clusters > 0 or num_outliers > 0:
+                    # 4. Plotar com Projeções (Igual ao K-means)
+                    titulo_plot = f"DBSCAN {sensor_nome} (eps={eps_val})\nOutliers: {densidade:.1f}%"
+                    
+                    plotar_dbscan_projecoes(
+                        dados_sampled,   # Dados originais para os eixos terem valores reais
+                        labels, 
+                        mask_outliers, 
+                        titulo_plot, 
+                        axis_labels=axis_lbls
+                    )
+            
+            except MemoryError:
+                print(f"   [ERRO] Falta de memória no {sensor_nome}. Aumenta o 'step'.")
+            except Exception as e:
+                print(f"   [ERRO] {e}")
+
+    print("--- Fim da análise DBSCAN ---\n")
 
     # -----------
     # Exercicio 4
-    # -----------
+    # -----------   
     
     print("\\n--- Objetivo 4: Extração de features, PCA e Feature Selection (guardado em outputs/) ---")
     
